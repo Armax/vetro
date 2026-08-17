@@ -39,6 +39,33 @@ sessions or launch agent sessions inside persistent, isolated VMs through
   forwarding, golden-image capture and reuse, optional idle auto-stop, and idle
   memory reclaim.
 
+## ⚡ Why a VM?
+
+Isolation is the obvious reason: agents run with full autonomy inside a
+disposable Linux guest, not on your Mac. The less obvious one is speed — agent
+workloads are *faster* inside the VM than on the host, because ext4 skips the
+two things that slow agentic coding down on macOS:
+
+- **APFS metadata tax** — agent workloads are metadata-heavy: package installs
+  and git operations create, stat, and unlink hundreds of thousands of small
+  files. APFS handles this far more slowly than ext4, so the same
+  `node_modules` churn that crawls on macOS is quick in the guest.
+- **Gatekeeper (`syspolicyd`) per-spawn checks** — macOS assesses newly spawned
+  executables through `syspolicyd`, adding latency to every process launch.
+  Agents spawn thousands of short-lived processes (compilers, linters, git,
+  node); inside Linux none of those checks exist.
+
+Benchmarks on the same Apple silicon machine, guest vs host:
+
+| Workload                     | VM (ext4) | macOS (APFS) | Result        |
+|------------------------------|-----------|--------------|---------------|
+| `pnpm install` — TS monorepo | 13.61s    | 30.10s       | VM 2.2× faster |
+| `git clean` — `node_modules` | 2.87s     | 25.73s       | VM 9× faster  |
+| 2,825 Jest tests — CPU-bound | 35.55s    | 35.40s       | no VM tax     |
+
+CPU-bound work runs at native speed under Virtualization.framework, so the VM
+costs nothing where the filesystem isn't involved and wins big where it is.
+
 ## 🧰 Requirements
 
 - macOS 26 or later.
