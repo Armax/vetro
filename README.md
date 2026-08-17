@@ -69,16 +69,18 @@ costs nothing where the filesystem isn't involved and wins big where it is.
 ## 🧰 Requirements
 
 - macOS 26 or later.
-- An Apple silicon Mac. The bundled GhosttyKit slice and the VM base image are
+- An Apple silicon Mac. The GhosttyKit slice and the VM base image are
   `arm64`.
 - Swift 6.1 with the macOS 26 SDK.
 - Command Line Tools for macOS. The build script borrows the SwiftUI macros
   plugin from Xcode-beta; see [Build](#-build).
-- Zig, only when rebuilding `GhosttyKit`.
+- Zig, to build `GhosttyKit`.
 
 ## 🔨 Build
 
-From the repository root:
+`GhosttyKit.xcframework` is not checked into the repository — build it first
+into `Frameworks/`; see [Building GhosttyKit](#-building-ghosttykit). Then,
+from the repository root:
 
 ```sh
 ./Support/build-app.sh release   # or debug
@@ -114,7 +116,7 @@ The script looks for Ghostty resources in `../ghostty-src` by default. Set
 .
 ├── Package.swift
 ├── Frameworks/
-│   └── GhosttyKit.xcframework
+│   └── GhosttyKit.xcframework      # built locally, not checked in
 ├── Sources/
 │   ├── Vetro/
 │   │   ├── VetroApp.swift              # SwiftUI scene and app wiring
@@ -147,10 +149,10 @@ surface to an AppKit view for input, sizing, focus, and Metal rendering.
 `VMStore` coordinates project attachments and session launches with the
 actor-based services in `VMKit`.
 
-## 🧱 Rebuilding GhosttyKit
+## 🧱 Building GhosttyKit
 
-The checked-in `GhosttyKit.xcframework` is built from a sibling Ghostty
-checkout:
+`Frameworks/GhosttyKit.xcframework` is built from a sibling
+[Ghostty](https://github.com/ghostty-org/ghostty) checkout:
 
 ```sh
 cd ../ghostty-src
@@ -175,5 +177,5 @@ Without it, the xcframework in `Frameworks/` is assembled by hand from
 
 Vetro is MIT-licensed. See [LICENSE](LICENSE).
 
-This repository bundles Ghostty (`GhosttyKit`), which is also MIT-licensed. The
-included Ghostty license notice is in [LICENSE](LICENSE).
+Vetro links against Ghostty (`GhosttyKit`), which is also MIT-licensed. The
+Ghostty license notice is included in [LICENSE](LICENSE).
