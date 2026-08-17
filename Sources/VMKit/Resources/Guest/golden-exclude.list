@@ -1,0 +1,14 @@
+.codex
+.grok/auth.json
+.grok/auth.json.lock
+.grok/agent_id
+.grok/logs
+.grok/projects
+.grok/active_sessions.json
+.grok/memtrace
+.config/vetro/env
+.config/vetro/credentials-version
+.config/vetro/agent-auth-version
+.git-credentials
+.claude.json
+.claude/.credentials.json

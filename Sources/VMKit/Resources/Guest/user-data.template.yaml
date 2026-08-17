@@ -1,0 +1,155 @@
+#cloud-config
+
+hostname: __VETRO_HOSTNAME__
+manage_etc_hosts: true
+ssh_pwauth: false
+package_update: false
+package_upgrade: false
+
+users:
+  - default
+  - name: vetro
+    gecos: vetro
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - __VETRO_SSH_PUBLIC_KEY__
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-vetro.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      AcceptEnv CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL VETRO_CRED_VERSION
+  - path: /usr/local/lib/vetro/guest-agent.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_GUEST_AGENT_BASE64__
+  - path: /usr/local/lib/vetro/vsock-ssh-bridge.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_VSOCK_SSH_BRIDGE_BASE64__
+  - path: /usr/local/lib/vetro/vsock-port-bridge.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_VSOCK_PORT_BRIDGE_BASE64__
+  - path: /usr/local/lib/vetro/vsock-host-bridge.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_VSOCK_HOST_BRIDGE_BASE64__
+  - path: /usr/local/lib/vetro/vetro-portwatch.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_PORTWATCH_BASE64__
+  - path: /usr/local/lib/vetro/vetro-hook-post.py
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_HOOK_POST_BASE64__
+  - path: /usr/local/lib/vetro/provision.sh
+    owner: root:root
+    permissions: '0755'
+    encoding: b64
+    content: __VETRO_PROVISION_BASE64__
+  - path: /etc/vetro/agents.conf
+    owner: root:root
+    permissions: '0644'
+    content: "__VETRO_AGENTS_CONF__"
+__VETRO_CUSTOM_SETUP_WRITE_FILE__
+  - path: /etc/systemd/system/vetro-guest-agent.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Vetro guest readiness agent
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/lib/vetro/guest-agent.py
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/vetro-vsock-ssh.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Vetro vsock SSH bridge
+      After=network.target ssh.service sshd.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/lib/vetro/vsock-ssh-bridge.py
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/vetro-vsock-port.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Vetro vsock port bridge
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/lib/vetro/vsock-port-bridge.py
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/vetro-vsock-host.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Vetro vsock host bridge
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/lib/vetro/vsock-host-bridge.py
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/vetro-portwatch.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Vetro port watcher
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/lib/vetro/vetro-portwatch.py
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, vetro-guest-agent.service]
+  - [systemctl, restart, ssh]
+  - [systemctl, enable, --now, vetro-vsock-ssh.service]
+  - [systemctl, enable, --now, vetro-vsock-port.service]
+  - [systemctl, enable, --now, vetro-vsock-host.service]
+  - [systemctl, enable, --now, vetro-portwatch.service]
+  - [sh, -c, "nohup /usr/local/lib/vetro/provision.sh </dev/null >/dev/null 2>&1 &"]
