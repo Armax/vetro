@@ -44,8 +44,8 @@ final class GhosttyRuntime {
         window-padding-x = 12
         window-padding-y = 8
         cursor-color = #2b52c9
-        selection-background = #c3d2f2
-        selection-foreground = #141c2c
+        selection-background = #141c2c
+        selection-foreground = #f4f6fb
         """ : """
         background = #0a0c12
         background-opacity = 0.1
@@ -54,8 +54,8 @@ final class GhosttyRuntime {
         window-padding-x = 12
         window-padding-y = 8
         cursor-color = #8ab4ff
-        selection-background = #2c3b63
-        selection-foreground = #eef1f8
+        selection-background = #eef1f8
+        selection-foreground = #0a0c12
         """
         let overridesURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("vetro-ghostty-config")
@@ -170,6 +170,27 @@ final class GhosttyRuntime {
                 title: payload.title.map { String(cString: $0) } ?? "",
                 body: payload.body.map { String(cString: $0) } ?? ""
             ))
+
+        case GHOSTTY_ACTION_NEW_SPLIT:
+            guard let surface else { return false }
+            surface.emit(.splitRequested(action.action.new_split))
+
+        case GHOSTTY_ACTION_GOTO_SPLIT:
+            guard let surface else { return false }
+            surface.emit(.focusSplit(action.action.goto_split))
+
+        case GHOSTTY_ACTION_RESIZE_SPLIT:
+            guard let surface else { return false }
+            let r = action.action.resize_split
+            surface.emit(.resizeSplit(direction: r.direction, amount: r.amount))
+
+        case GHOSTTY_ACTION_EQUALIZE_SPLITS:
+            guard let surface else { return false }
+            surface.emit(.equalizeSplits)
+
+        case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM:
+            guard let surface else { return false }
+            surface.emit(.toggleSplitZoom)
 
         case GHOSTTY_ACTION_QUIT:
             NSApp.terminate(nil)

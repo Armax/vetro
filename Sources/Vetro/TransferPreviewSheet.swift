@@ -77,11 +77,12 @@ struct TransferPreviewSheet: View {
 
     private var directionLine: String {
         let vmPath = vms.attachment(for: project.id)?.guestPath ?? "VM"
+        let macPath = project.path ?? ""
         switch direction {
         case .exportToMac:
-            return "VM \(vmPath) → Mac \(project.path)"
+            return "VM \(vmPath) → Mac \(macPath)"
         case .importFromMac:
-            return "Mac \(project.path) → VM \(vmPath)"
+            return "Mac \(macPath) → VM \(vmPath)"
         }
     }
 
@@ -207,7 +208,7 @@ struct TransferPreviewSheet: View {
             } else {
                 preview = result
                 let paths = (result.adds + result.updates + result.deletes).map(\.path)
-                ignoredPaths = await Self.gitIgnoredPaths(paths, repo: project.path)
+                ignoredPaths = await Self.gitIgnoredPaths(paths, repo: project.path ?? "")
             }
         } catch is CancellationError {
             // Cancelling the sheet invalidates the store's comparison token.

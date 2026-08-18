@@ -1,17 +1,25 @@
 import Foundation
 
+struct VMOrigin: Codable, Hashable {
+    let vmID: UUID
+    var guestPath: String
+}
+
 struct Project: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
-    var path: String
+    var path: String?
+    var vmOrigin: VMOrigin?
 
-    init(id: UUID = UUID(), name: String, path: String) {
+    init(id: UUID = UUID(), name: String, path: String?, vmOrigin: VMOrigin? = nil) {
         self.id = id
         self.name = name
         self.path = path
+        self.vmOrigin = vmOrigin
     }
 
-    var url: URL { URL(fileURLWithPath: path) }
+    var url: URL? { path.map { URL(fileURLWithPath: $0) } }
+    var isVMOnly: Bool { path == nil && vmOrigin != nil }
 }
 
 enum SessionTarget: Hashable {

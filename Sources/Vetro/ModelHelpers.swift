@@ -3,7 +3,8 @@ import Foundation
 extension Project {
     /// Current git branch, read from .git/HEAD (cheap; no git invocation).
     var gitBranch: String? {
-        guard let head = try? String(contentsOf: url.appendingPathComponent(".git/HEAD"), encoding: .utf8)
+        guard let url,
+              let head = try? String(contentsOf: url.appendingPathComponent(".git/HEAD"), encoding: .utf8)
         else { return nil }
         let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
         if let range = trimmed.range(of: "refs/heads/") {
@@ -14,6 +15,7 @@ extension Project {
 
     /// "~/dev/vetro"-style path for display.
     var displayPath: String {
+        guard let path else { return vmOrigin?.guestPath ?? "" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }

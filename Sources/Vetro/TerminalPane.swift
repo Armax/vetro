@@ -72,6 +72,13 @@ struct TerminalPane: View {
                             ? HostGitSource(repoPath: NSHomeDirectory())
                             : nil
                     }
+                    if let origin = project.vmOrigin {
+                        return VMOnlyGuestGitSource(
+                            repoPath: origin.guestPath,
+                            vmID: origin.vmID,
+                            vms: vms
+                        )
+                    }
                     if let attachment = vms.attachment(for: projectID),
                        attachment.state == .ready
                     {
@@ -81,7 +88,10 @@ struct TerminalPane: View {
                             vms: vms
                         )
                     }
-                    return HostGitSource(repoPath: project.path)
+                    if let path = project.path {
+                        return HostGitSource(repoPath: path)
+                    }
+                    return nil
                 },
                 settings: settings
             )
@@ -105,8 +115,12 @@ struct TerminalPane: View {
                 // surface across sidebar/toolbar/terminal, per the design.
                 theme.term
             }
-            if let surface = sessions.surface(for: session.id) {
-                SurfaceHost(surface: surface)
+            if let tree = sessions.tree(for: session.id) {
+                if let zoomed = tree.zoomed, let s = zoomed.surface {
+                    SurfaceHost(surface: s).id(s.id)
+                } else {
+                    SplitContainer(node: tree.root, focusedID: tree.focused.id)
+                }
             } else if sessions.isBooting(session.id) {
                 VStack(spacing: 10) {
                     ProgressView()

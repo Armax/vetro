@@ -45,3 +45,18 @@ struct GuestGitSource: GitSource {
         )
     }
 }
+
+/// VM-only repos: one-shot SSH that boots the VM on demand.
+struct VMOnlyGuestGitSource: GitSource {
+    let repoPath: String
+    let vmID: UUID
+    let vms: VMStore
+
+    func exec(bashScript: String, timeoutSeconds: Int) async -> (status: Int32, stdout: String, stderr: String)? {
+        await vms.execOnGuest(
+            vmID: vmID,
+            command: "bash -lc \(shellQuoted(bashScript))",
+            timeoutSeconds: timeoutSeconds
+        )
+    }
+}

@@ -13,6 +13,12 @@ struct TransferPreviewRequest: Identifiable {
     let direction: TransferDirection
 }
 
+struct AddVMProjectRequest: Identifiable {
+    let id = UUID()
+    let vmID: UUID
+    let vmName: String
+}
+
 /// In-window navigation and transient UI state.
 @MainActor
 @Observable
@@ -40,6 +46,7 @@ final class UIState {
     var searchFieldFocused: Bool = false
     var newVMRequest: NewVMRequest?
     var transferPreviewRequest: TransferPreviewRequest?
+    var addVMProjectRequest: AddVMProjectRequest?
     private(set) var toast: String?
 
     private var toastTask: Task<Void, Never>?
@@ -58,6 +65,10 @@ final class UIState {
             defaultName: defaultName,
             attachingProject: project
         )
+    }
+
+    func presentAddVMProject(vmID: UUID, vmName: String) {
+        addVMProjectRequest = AddVMProjectRequest(vmID: vmID, vmName: vmName)
     }
 
     func presentTransferPreview(for project: Project, direction: TransferDirection) {

@@ -1,11 +1,19 @@
 import AppKit
 import Foundation
+import GhosttyKit
 import Observation
 
 enum VMTerminalLaunchDecision: Sendable {
     case local
     case remote(command: String)
     case unavailable(message: String)
+}
+
+/// Everything a split needs to open another leaf in an existing session.
+@MainActor
+private struct SplitLaunch {
+    let workingDirectory: String
+    let resolve: (UUID) async -> VMTerminalLaunchDecision
 }
 
 /// Owns all live terminal sessions and the selection state.
@@ -25,7 +33,10 @@ final class SessionManager {
         }
     }
 
-    private var surfaces: [UUID: TerminalSurface] = [:]
+    private var trees: [UUID: SplitTree] = [:]
+    /// Per-session launch context so a split re-resolves the same target
+    /// (same cwd, same VM SSH shell) with the session's shared VETRO_SESSION_ID.
+    @ObservationIgnored private var splitLaunches: [UUID: SplitLaunch] = [:]
     private var endedSessions: Set<UUID> = []
     private var bootingSessions: Set<UUID> = []
     private(set) var activities: [UUID: ChatActivity] = [:]
@@ -109,7 +120,11 @@ final class SessionManager {
     }
 
     func surface(for id: UUID) -> TerminalSurface? {
-        surfaces[id]
+        trees[id]?.rootSurface
+    }
+
+    func tree(for id: UUID) -> SplitTree? {
+        trees[id]
     }
 
     func isBooting(_ id: UUID) -> Bool {
@@ -344,7 +359,7 @@ final class SessionManager {
             target: .project(project.id),
             count: sessions(in: project).count,
             title: title,
-            workingDirectory: project.url.path
+            workingDirectory: project.url?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
         ) { sessionID in
             await self.vmTerminalLaunchProvider?(project, sessionID, remoteCommand) ?? .local
         }
@@ -379,7 +394,7 @@ final class SessionManager {
         count: Int,
         title: String?,
         workingDirectory: String,
-        resolveLaunch: (UUID) async -> VMTerminalLaunchDecision
+        resolveLaunch: @escaping (UUID) async -> VMTerminalLaunchDecision
     ) async -> Session? {
         let sessionID = UUID()
         // Publish the session before the launch await so the chat pane can
@@ -412,15 +427,19 @@ final class SessionManager {
 
         do {
             let childrenBefore = directChildPIDs()
-            let surface = try TerminalSurface(
+            let surface = try makeSurface(
+                sessionID: session.id,
                 workingDirectory: workingDirectory,
                 command: command,
-                fontSize: terminalFontSize,
-                sessionID: session.id
-            ) { [weak self] event in
-                self?.handle(event, for: session.id)
-            }
-            surfaces[session.id] = surface
+                context: GHOSTTY_SURFACE_CONTEXT_WINDOW
+            )
+            let tree = SplitTree(surface: surface)
+            bindFocus(surface, in: tree)
+            trees[session.id] = tree
+            splitLaunches[session.id] = SplitLaunch(
+                workingDirectory: workingDirectory,
+                resolve: resolveLaunch
+            )
             if command != nil {
                 vmBacked.insert(session.id)
             } else {
@@ -434,6 +453,93 @@ final class SessionManager {
         }
     }
 
+    private func makeSurface(
+        sessionID: UUID,
+        workingDirectory: String,
+        command: String?,
+        context: ghostty_surface_context_e
+    ) throws -> TerminalSurface {
+        try TerminalSurface(
+            workingDirectory: workingDirectory,
+            command: command,
+            fontSize: terminalFontSize,
+            sessionID: sessionID,
+            context: context
+        ) { [weak self] surface, event in
+            self?.handle(event, from: surface, for: sessionID)
+        }
+    }
+
+    /// Clicking / focusing a leaf updates the tree's focus.
+    private func bindFocus(_ surface: TerminalSurface, in tree: SplitTree) {
+        surface.onFocused = { [weak tree, weak surface] in
+            guard let tree, let surface, let node = tree.leaf(for: surface) else { return }
+            tree.focused = node
+        }
+    }
+
+    /// Opens another leaf in an existing session, re-resolving the launch so a
+    /// VM split becomes a second independent SSH shell into the same VM.
+    private func createSplit(
+        in id: UUID,
+        from origin: TerminalSurface,
+        direction: ghostty_action_split_direction_e
+    ) async {
+        guard trees[id]?.leaf(for: origin) != nil,
+              let launch = splitLaunches[id]
+        else { return }
+
+        let command: String?
+        switch await launch.resolve(id) {
+        case .local:
+            command = nil
+        case let .remote(remoteCommand):
+            command = remoteCommand
+        case let .unavailable(message):
+            let alert = NSAlert()
+            alert.messageText = "VM unavailable"
+            alert.informativeText = message
+            alert.runModal()
+            return
+        }
+
+        // The await above yields; re-check the tree and origin still exist.
+        guard let tree = trees[id], let node = tree.leaf(for: origin) else { return }
+        do {
+            let surface = try makeSurface(
+                sessionID: id,
+                workingDirectory: launch.workingDirectory,
+                command: command,
+                context: GHOSTTY_SURFACE_CONTEXT_SPLIT
+            )
+            bindFocus(surface, in: tree)
+            tree.split(node, direction: direction, newSurface: surface)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    /// Menu / toolbar entry point: split the selected session's focused leaf.
+    func splitFocused(in id: UUID, direction: ghostty_action_split_direction_e) {
+        guard let tree = trees[id],
+              let origin = (tree.zoomed ?? tree.focused).surface
+        else { return }
+        Task { await createSplit(in: id, from: origin, direction: direction) }
+    }
+
+    /// Cmd+W in a terminal: collapse the focused leaf, or close the whole
+    /// session when it is the last one. Never marks the session ended while
+    /// other leaves are alive (the VM ref-count depends on it).
+    private func closeSplit(_ surface: TerminalSurface, in id: UUID) {
+        guard let tree = trees[id], let node = tree.leaf(for: surface) else { return }
+        if tree.leaves.count > 1 {
+            surface.close()
+            tree.close(node)
+        } else {
+            closeSession(id)
+        }
+    }
+
     private func removePlaceholderSession(_ id: UUID) {
         sessions.removeAll { $0.id == id }
         bootingSessions.remove(id)
@@ -444,8 +550,11 @@ final class SessionManager {
 
     func closeSession(_ id: UUID) {
         sessionDidEnd?(id)
-        surfaces[id]?.close()
-        surfaces[id] = nil
+        if let tree = trees[id] {
+            for leaf in tree.leaves { leaf.surface?.close() }
+        }
+        trees[id] = nil
+        splitLaunches[id] = nil
         endedSessions.remove(id)
         activities[id] = nil
         shellPIDs[id] = nil
@@ -470,9 +579,10 @@ final class SessionManager {
         }
     }
 
-    private func handle(_ event: TerminalSurface.Event, for id: UUID) {
+    private func handle(_ event: TerminalSurface.Event, from surface: TerminalSurface, for id: UUID) {
         switch event {
         case .titleChanged(let raw):
+            guard trees[id]?.rootSurface === surface else { return }
             guard lastRawTitle[id] != raw else { return }
             lastRawTitle[id] = raw
             let (title, active) = TitleActivity.parse(raw)
@@ -496,11 +606,21 @@ final class SessionManager {
                 notifyFinished(id)
             }
         case .processEnded:
-            endedSessions.insert(id)
-            sessionDidEnd?(id)
+            guard let tree = trees[id], let node = tree.leaf(for: surface) else { return }
+            if tree.leaves.count > 1 {
+                // A non-last leaf's shell exited: collapse just that pane.
+                surface.close()
+                tree.close(node)
+            } else {
+                // Last leaf: keep today's behavior — mark ended, surface stays.
+                endedSessions.insert(id)
+                sessionDidEnd?(id)
+            }
         case .attention:
+            guard trees[id]?.rootSurface === surface else { return }
             markAttention(id)
         case .notification(let title, let body):
+            guard trees[id]?.rootSurface === surface else { return }
             markAttention(id)
             let fallback = session(id)?.title ?? "Agent"
             AgentNotifier.shared.notify(
@@ -509,11 +629,28 @@ final class SessionManager {
                 body: body
             )
         case .closeRequested:
-            closeSession(id)
+            closeSplit(surface, in: id)
         case .newSessionRequested:
             if let target = session(id)?.target {
                 newSessionRequest?(target)
             }
+        case .splitRequested(let direction):
+            Task { await createSplit(in: id, from: surface, direction: direction) }
+        case .focusSplit(let goto):
+            guard let tree = trees[id], let node = tree.leaf(for: surface),
+                  let target = tree.neighbor(of: node, goto: goto) else { return }
+            tree.focused = target
+            tree.zoomed = nil
+        case .resizeSplit(let direction, let amount):
+            guard let tree = trees[id], let node = tree.leaf(for: surface) else { return }
+            tree.resize(node, direction: direction, amount: amount)
+        case .equalizeSplits:
+            trees[id]?.equalize()
+        case .toggleSplitZoom:
+            guard let tree = trees[id], tree.leaves.count > 1,
+                  let node = tree.leaf(for: surface) else { return }
+            tree.zoomed = (tree.zoomed === node) ? nil : node
+            if tree.zoomed != nil { tree.focused = node }
         }
     }
 

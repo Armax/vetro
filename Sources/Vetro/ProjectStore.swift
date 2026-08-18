@@ -26,6 +26,22 @@ final class ProjectStore {
         return project
     }
 
+    func addVMProject(name: String, vmID: UUID, guestPath: String) -> Project {
+        if let existing = projects.first(where: {
+            $0.vmOrigin?.vmID == vmID && $0.vmOrigin?.guestPath == guestPath
+        }) {
+            return existing
+        }
+        let project = Project(
+            name: name,
+            path: nil,
+            vmOrigin: VMOrigin(vmID: vmID, guestPath: guestPath)
+        )
+        projects.append(project)
+        save()
+        return project
+    }
+
     func removeProject(_ project: Project) {
         projects.removeAll { $0.id == project.id }
         save()

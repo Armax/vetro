@@ -50,21 +50,6 @@ struct SidebarView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(theme.t1)
             Spacer()
-            if ui.view == .app {
-                Hoverable { hovered in
-                    Button {
-                        addProjectAndStart(store: store, sessions: sessions)
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 12))
-                            .foregroundStyle(hovered ? theme.t1 : theme.t2)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Add project")
-                }
-            }
             Hoverable { hovered in
                 Button {
                     settings.sidebarVisible = false
@@ -107,19 +92,35 @@ struct SidebarView: View {
                 Text("No Projects")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.t1)
-                Hoverable { hovered in
-                    Button {
-                        addProjectAndStart(store: store, sessions: sessions)
-                    } label: {
-                        Text("Add Project")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(theme.t1)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                            .glassCapsule(tint: theme.chip, interactive: true)
-                            .brightness(hovered ? 0.1 : 0)
+                if vms.vms.isEmpty {
+                    Hoverable { hovered in
+                        Button {
+                            addProjectAndStart(store: store, sessions: sessions)
+                        } label: {
+                            addProjectCapsule(theme, hovered: hovered)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                } else {
+                    Hoverable { hovered in
+                        Menu {
+                            Button("From Mac…") {
+                                addProjectAndStart(store: store, sessions: sessions)
+                            }
+                            Divider()
+                            ForEach(vms.vms) { vm in
+                                Button("From \(vm.name)…") {
+                                    ui.presentAddVMProject(vmID: vm.id, vmName: vm.name)
+                                }
+                            }
+                        } label: {
+                            addProjectCapsule(theme, hovered: hovered)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -135,7 +136,19 @@ struct SidebarView: View {
                 }
                 .padding(EdgeInsets(top: 2, leading: 8, bottom: 6, trailing: 8))
             }
-            sectionLabel("Projects", theme)
+            Hoverable { rowHovered in
+                HStack(spacing: 0) {
+                    Text("PROJECTS")
+                        .font(.system(size: 11, weight: .semibold))
+                        .kerning(0.6)
+                        .foregroundStyle(theme.t3)
+                    Spacer()
+                    AddProjectControl()
+                        .opacity(rowHovered ? 1 : 0)
+                }
+                .padding(EdgeInsets(top: 4, leading: 16, bottom: 2, trailing: 12))
+                .contentShape(Rectangle())
+            }
             ScrollView {
                 VStack(spacing: 3) {
                     ForEach(store.projects) { project in
@@ -146,6 +159,16 @@ struct SidebarView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func addProjectCapsule(_ theme: Theme, hovered: Bool) -> some View {
+        Text("Add Project")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(theme.t1)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .glassCapsule(tint: theme.chip, interactive: true)
+            .brightness(hovered ? 0.1 : 0)
     }
 
     private func sectionLabel(_ text: String, _ theme: Theme) -> some View {
@@ -259,6 +282,57 @@ struct SidebarView: View {
         if store.projects.isEmpty { return "No projects yet" }
         let n = sessions.runningCount
         return "\(n) active chat\(n == 1 ? "" : "s")"
+    }
+}
+
+// MARK: - Add-project control
+
+/// The "+" beside the PROJECTS header: a plain add button when there are no
+/// VMs, otherwise a menu offering Mac or any VM as the project source.
+private struct AddProjectControl: View {
+    @Environment(ProjectStore.self) private var store
+    @Environment(SessionManager.self) private var sessions
+    @Environment(AppSettings.self) private var settings
+    @Environment(VMStore.self) private var vms
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        let theme = settings.theme
+        if vms.vms.isEmpty {
+            Hoverable { hovered in
+                Button {
+                    addProjectAndStart(store: store, sessions: sessions)
+                } label: { plusIcon(hovered, theme) }
+                .buttonStyle(.plain)
+                .help("Add project")
+            }
+        } else {
+            Hoverable { hovered in
+                Menu {
+                    Button("From Mac…") {
+                        addProjectAndStart(store: store, sessions: sessions)
+                    }
+                    Divider()
+                    ForEach(vms.vms) { vm in
+                        Button("From \(vm.name)…") {
+                            ui.presentAddVMProject(vmID: vm.id, vmName: vm.name)
+                        }
+                    }
+                } label: { plusIcon(hovered, theme) }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+        }
+    }
+
+    private func plusIcon(_ hovered: Bool, _ theme: Theme) -> some View {
+        Image(systemName: "plus")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(hovered ? theme.t1 : theme.t3)
+            .frame(width: 20, height: 16)
+            .contentShape(Rectangle())
     }
 }
 
@@ -463,6 +537,7 @@ private struct EnvironmentGroup: View {
                     .buttonStyle(.plain)
                     .help("New chat")
                 }
+                .opacity(hovered ? 1 : 0)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5.5)
@@ -562,6 +637,7 @@ private struct ProjectGroup: View {
                     .menuIndicator(.hidden)
                     .fixedSize()
                 }
+                .opacity(hovered ? 1 : 0)
                 Hoverable { plusHovered in
                     Button {
                         Task { await sessions.startSession(in: project) }
@@ -575,6 +651,7 @@ private struct ProjectGroup: View {
                     .buttonStyle(.plain)
                     .help("New chat")
                 }
+                .opacity(hovered ? 1 : 0)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5.5)
@@ -726,27 +803,36 @@ private struct ProjectGroup: View {
         return Double(completed) / Double(vm.phases.count) * 100
     }
 
+    /// The static "VM" chip, shared by ready attachments and VM-only projects.
+    private var vmChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 8))
+            Text("VM")
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(settings.theme.accentSoft)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(Color(hex: 0x7a9bff, alpha: 0.16), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(hex: 0x7a9bff, alpha: 0.22), lineWidth: 1)
+        }
+    }
+
     /// VM state badge driven by the operational VMStore.
     @ViewBuilder
     private var vmBadge: some View {
-        if let attachment {
+        if project.isVMOnly {
+            vmChip.help(
+                project.vmOrigin.flatMap { vms.vm($0.vmID) }
+                    .map { "Running in \($0.name)" } ?? "VM project"
+            )
+        } else if let attachment {
             switch attachment.state {
             case .ready:
-                HStack(spacing: 4) {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 8))
-                    Text("VM")
-                }
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(settings.theme.accentSoft)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Color(hex: 0x7a9bff, alpha: 0.16), in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color(hex: 0x7a9bff, alpha: 0.22), lineWidth: 1)
-                }
-                .help(
+                vmChip.help(
                     attachment.vm.state == .stopped
                         ? "Stopped — projects stay imported"
                         : "Running in \(attachment.vm.name)"
@@ -868,6 +954,7 @@ struct ProjectContextMenu: View {
             Task { await sessions.startSession(in: project) }
         }
 
+        if !project.isVMOnly {
         if let attachment = vms.attachment(for: project.id) {
             Button("Edit Import Filters") {
                 editImportFilters()
@@ -932,10 +1019,13 @@ struct ProjectContextMenu: View {
                 }
             }
         }
+        }
 
         Divider()
-        Button("Reveal in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([project.url])
+        if let url = project.url {
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
         }
         Button("Remove Project", role: .destructive) {
             Task {
@@ -955,7 +1045,8 @@ struct ProjectContextMenu: View {
     }
 
     private func editImportFilters() {
-        let url = project.url.appendingPathComponent(".vetroignore")
+        guard let projectURL = project.url else { return }
+        let url = projectURL.appendingPathComponent(".vetroignore")
         if !FileManager.default.fileExists(atPath: url.path) {
             guard (try? "# rsync exclude patterns, one per line\n".write(
                 to: url,

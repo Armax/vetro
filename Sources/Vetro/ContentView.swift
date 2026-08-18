@@ -73,6 +73,10 @@ struct ContentView: View {
             )
             .presentationBackground(.clear)
         }
+        .sheet(item: $ui.addVMProjectRequest) { request in
+            AddVMProjectSheet(vmID: request.vmID, vmName: request.vmName)
+                .presentationBackground(.clear)
+        }
         .ignoresSafeArea(.container, edges: .top)
         .background(WindowConfigurator())
         .frame(minWidth: 900, minHeight: 560)
@@ -92,7 +96,8 @@ struct ContentView: View {
             }
             sessions.projectPathProvider = projectPathProvider
             sessions.guestPathProvider = { id in
-                vms.attachments[id]?.guestPath
+                store.projects.first(where: { $0.id == id })?.vmOrigin?.guestPath
+                    ?? vms.attachments[id]?.guestPath
             }
             sessions.vmTerminalLaunchProvider = { project, sessionID, remoteCommand in
                 await vms.prepareTerminalLaunch(
@@ -117,6 +122,12 @@ struct ContentView: View {
             }
             vms.projectResolver = { id in
                 store.projects.first(where: { $0.id == id })
+            }
+            vms.vmOnlyGuestPathsProvider = { vmID in
+                store.projects.compactMap { project in
+                    guard let origin = project.vmOrigin, origin.vmID == vmID else { return nil }
+                    return origin.guestPath
+                }
             }
             vms.errorPresenter = { message in
                 ui.showToast(message)

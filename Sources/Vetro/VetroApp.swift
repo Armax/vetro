@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 import SwiftUI
 
 @MainActor
@@ -59,6 +60,13 @@ struct VetroApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
 
+                Button("Split Right") { splitSelected(GHOSTTY_SPLIT_DIRECTION_RIGHT) }
+                    .keyboardShortcut("d", modifiers: .command)
+                Button("Split Down") { splitSelected(GHOSTTY_SPLIT_DIRECTION_DOWN) }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                Button("Split Left") { splitSelected(GHOSTTY_SPLIT_DIRECTION_LEFT) }
+                Button("Split Up") { splitSelected(GHOSTTY_SPLIT_DIRECTION_UP) }
+
                 Button("Search Chats") {
                     ui.view = .app
                     ui.searchFieldFocused = true
@@ -76,6 +84,12 @@ struct VetroApp: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
+        }
+    }
+
+    private func splitSelected(_ direction: ghostty_action_split_direction_e) {
+        if let id = sessions.selectedSessionID {
+            sessions.splitFocused(in: id, direction: direction)
         }
     }
 

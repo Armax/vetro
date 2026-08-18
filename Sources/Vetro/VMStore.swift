@@ -1026,6 +1026,13 @@ final class VMStore {
             record(error: error)
             throw error
         }
+        // VM-only projects are never attached, so this is unreachable for them;
+        // the guard keeps the optional `path` type-safe.
+        guard let projectPath = project.path else {
+            let error = VMOperationError.attachmentNotFound
+            record(error: error)
+            throw error
+        }
 
         if let pendingTransfer {
             guard pendingTransfer.projectID == project.id,
@@ -1070,17 +1077,17 @@ final class VMStore {
                     runtime: connection.runtime,
                     port: connection.port,
                     source: "\(connection.destination):\(connection.attachment.guestPath)/",
-                    destination: Self.withTrailingSlash(project.path),
-                    projectRoot: project.url,
+                    destination: Self.withTrailingSlash(projectPath),
+                    projectRoot: URL(fileURLWithPath: projectPath),
                     preview: true
                 )
             case .importFromMac:
                 arguments = rsyncArguments(
                     runtime: connection.runtime,
                     port: connection.port,
-                    source: Self.withTrailingSlash(project.path),
+                    source: Self.withTrailingSlash(projectPath),
                     destination: "\(connection.destination):\(connection.attachment.guestPath)/",
-                    projectRoot: project.url,
+                    projectRoot: URL(fileURLWithPath: projectPath),
                     preview: true
                 )
             }
@@ -1142,6 +1149,10 @@ final class VMStore {
         reusedConnection: ReadyConnection?,
         token: UUID
     ) async throws {
+        // VM-only projects are never attached, so import is unreachable for them.
+        guard let projectPath = project.path else {
+            throw VMOperationError.attachmentNotFound
+        }
         let connection = try await transferConnection(
             for: project,
             reusing: reusedConnection
@@ -1168,9 +1179,9 @@ final class VMStore {
         let arguments = rsyncArguments(
             runtime: connection.runtime,
             port: connection.port,
-            source: Self.withTrailingSlash(project.path),
+            source: Self.withTrailingSlash(projectPath),
             destination: "\(connection.destination):\(connection.attachment.guestPath)/",
-            projectRoot: project.url
+            projectRoot: URL(fileURLWithPath: projectPath)
         )
         let result = try await Self.runRsync(arguments: arguments) { [weak self] percent in
             Task { @MainActor [weak self] in
@@ -1202,17 +1213,24 @@ final class VMStore {
         _ project: Project,
         reusedConnection: ReadyConnection?
     ) async throws {
+        // VM-only projects are never attached, so export is unreachable for them.
+        guard let projectPath = project.path else {
+            throw VMOperationError.attachmentNotFound
+        }
         let connection = try await transferConnection(
             for: project,
             reusing: reusedConnection
         )
-        try fileManager.createDirectory(at: project.url, withIntermediateDirectories: true)
+        try fileManager.createDirectory(
+            at: URL(fileURLWithPath: projectPath),
+            withIntermediateDirectories: true
+        )
         let arguments = rsyncArguments(
             runtime: connection.runtime,
             port: connection.port,
             source: "\(connection.destination):\(connection.attachment.guestPath)/",
-            destination: Self.withTrailingSlash(project.path),
-            projectRoot: project.url
+            destination: Self.withTrailingSlash(projectPath),
+            projectRoot: URL(fileURLWithPath: projectPath)
         )
         let result = try await Self.runRsync(arguments: arguments) { _ in }
         guard result.status == 0 else {
@@ -1789,6 +1807,10 @@ final class VMStore {
 
     /// Resolves a project ID to its model; wired by the app at launch.
     @ObservationIgnored var projectResolver: ((UUID) -> Project?)?
+
+    /// Guest paths occupied by VM-only projects on a given VM; wired at launch.
+    /// Keeps `availableGuestPath` from colliding a later attach with them.
+    @ObservationIgnored var vmOnlyGuestPathsProvider: ((UUID) -> [String])?
 
     /// Presents a refused or failed operation to the user (e.g. as a toast).
     @ObservationIgnored var errorPresenter: ((String) -> Void)?
@@ -2886,6 +2908,13 @@ final class VMStore {
         sessionID: UUID,
         remoteCommand: String? = nil
     ) async -> VMTerminalLaunchDecision {
+        if let origin = project.vmOrigin {
+            return await prepareVMOnlyLaunch(
+                origin: origin,
+                sessionID: sessionID,
+                remoteCommand: remoteCommand
+            )
+        }
         guard let initialAttachment = attachments[project.id] else { return .local }
         guard initialAttachment.state == .ready else {
             return .unavailable(message: "The project import is not ready yet.")
@@ -2952,9 +2981,27 @@ final class VMStore {
         remoteCommand: String? = nil
     ) -> String? {
         guard let attachment = attachments[project.id], attachment.state == .ready,
-              let vm = vm(attachment.vmID), vm.state == .ready,
-              !vm.ip.isEmpty, vm.ip != "—"
+              let vm = vm(attachment.vmID)
         else {
+            return nil
+        }
+        return remoteShellCommand(
+            vmID: vm.id,
+            guestPath: attachment.guestPath,
+            sessionID: sessionID,
+            remoteCommand: remoteCommand
+        )
+    }
+
+    /// Builds the Ghostty SSH invocation that lands in `guestPath` on `vmID`,
+    /// independent of any rsync attachment (works for VM-only projects too).
+    private func remoteShellCommand(
+        vmID: UUID,
+        guestPath: String,
+        sessionID: UUID,
+        remoteCommand: String?
+    ) -> String? {
+        guard let vm = vm(vmID), vm.state == .ready, !vm.ip.isEmpty, vm.ip != "—" else {
             return nil
         }
 
@@ -2967,9 +3014,9 @@ final class VMStore {
         guard !invocation.isEmpty else { return nil }
         invocation.insert("-t", at: invocation.index(before: invocation.endIndex))
         let shellCommand = if let remoteCommand {
-            "cd \(Self.shellQuote(attachment.guestPath)) && exec \"$SHELL\" -lc \(Self.shellQuote(remoteCommand))"
+            "cd \(Self.shellQuote(guestPath)) && exec \"$SHELL\" -lc \(Self.shellQuote(remoteCommand))"
         } else {
-            "cd \(Self.shellQuote(attachment.guestPath)) && exec \"$SHELL\" -l"
+            "cd \(Self.shellQuote(guestPath)) && exec \"$SHELL\" -l"
         }
         invocation.append(
             // TERM: the guest has no xterm-ghostty terminfo, which breaks
@@ -2978,6 +3025,38 @@ final class VMStore {
                 + "export TERM=xterm-256color; \(shellCommand)"
         )
         return invocation.map(Self.shellQuote).joined(separator: " ")
+    }
+
+    /// Project-free launch for a VM-only project: boots the VM on demand and
+    /// lands in the project's guest path. Never touches rsync/import machinery.
+    func prepareVMOnlyLaunch(
+        origin: VMOrigin,
+        sessionID: UUID,
+        remoteCommand: String?
+    ) async -> VMTerminalLaunchDecision {
+        guard let model = vm(origin.vmID) else {
+            return .unavailable(message: "The VM no longer exists.")
+        }
+        switch model.state {
+        case .ready:
+            runtimes[model.id]?.lastBusy = .now
+            await restoreMemoryIfReclaimed(model.id)
+        case .stopped, .error:
+            await startVM(model.id)
+        case .downloading, .provisioning, .starting:
+            await waitUntilSettled(model.id)
+        }
+        guard let currentVM = vm(origin.vmID), currentVM.state == .ready,
+              let command = remoteShellCommand(
+                  vmID: origin.vmID,
+                  guestPath: origin.guestPath,
+                  sessionID: sessionID,
+                  remoteCommand: remoteCommand
+              )
+        else {
+            return .unavailable(message: "The VM could not be started.")
+        }
+        return .remote(command: command)
     }
 
     /// Project-free launch into a VM's guest `$HOME` (Environments section).
@@ -4193,10 +4272,11 @@ final class VMStore {
 
     private func availableGuestPath(for project: Project, on vmID: UUID) -> String {
         let base = Self.guestPath(for: project)
-        let occupied: Set<String> = Set(attachments.compactMap { projectID, attachment in
+        var occupied: Set<String> = Set(attachments.compactMap { projectID, attachment in
             guard projectID != project.id, attachment.vmID == vmID else { return nil }
             return attachment.guestPath
         })
+        occupied.formUnion(vmOnlyGuestPathsProvider?(vmID) ?? [])
         guard occupied.contains(base) else { return base }
 
         let suffix = project.id.uuidString.lowercased().prefix(8)
@@ -4275,6 +4355,72 @@ final class VMStore {
 
     static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    /// Boots the VM on demand, then runs one bounded SSH command in the guest.
+    /// Used for VM-only project discovery/creation and VM-only git.
+    func execOnGuest(
+        vmID: UUID,
+        command: String,
+        timeoutSeconds: Int
+    ) async -> (status: Int32, stdout: String, stderr: String)? {
+        guard let model = vm(vmID) else { return nil }
+
+        switch model.state {
+        case .ready:
+            runtimes[model.id]?.lastBusy = .now
+            await restoreMemoryIfReclaimed(model.id)
+        case .stopped, .error:
+            await startVM(model.id)
+        case .downloading, .provisioning, .starting:
+            await waitUntilSettled(model.id)
+        }
+
+        guard let currentVM = vm(vmID), currentVM.state == .ready else { return nil }
+        let runtime = runtime(
+            for: currentVM.id,
+            hostname: Self.slug(currentVM.name, fallback: "vetro")
+        )
+        guard let port = runtime.forwardedPort else { return nil }
+        runtime.lastBusy = .now
+        return try? await runtime.sshClient.exec(
+            host: "127.0.0.1",
+            port: port,
+            command: command,
+            timeoutSeconds: timeoutSeconds
+        )
+    }
+
+    /// Existing `/workspace/*` folders on the guest, for the VM-only add flow.
+    func listWorkspaceFolders(vmID: UUID) async -> [String] {
+        let find = "find /workspace -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\\n' 2>/dev/null | sort"
+        if let result = await execOnGuest(vmID: vmID, command: find, timeoutSeconds: 15),
+           result.status == 0 {
+            let names = Self.splitFolders(result.stdout)
+            if !names.isEmpty { return names }
+        }
+        let ls = "ls -1p /workspace 2>/dev/null | grep '/$' | sed 's:/$::' | sort"
+        guard let fallback = await execOnGuest(vmID: vmID, command: ls, timeoutSeconds: 15),
+              fallback.status == 0 else { return [] }
+        return Self.splitFolders(fallback.stdout)
+    }
+
+    private static func splitFolders(_ stdout: String) -> [String] {
+        stdout.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix(".") }
+    }
+
+    /// Creates a new `/workspace/<slug>` folder on the guest; returns its path.
+    func makeWorkspaceFolder(vmID: UUID, name: String) async -> String? {
+        let guestPath = "/workspace/\(Self.slug(name, fallback: "project"))"
+        guard Self.isSafeGuestPath(guestPath) else { return nil }
+        guard let result = await execOnGuest(
+            vmID: vmID,
+            command: "mkdir -p -- \(Self.shellQuote(guestPath))",
+            timeoutSeconds: 30
+        ), result.status == 0 else { return nil }
+        return guestPath
     }
 
     /// Bounded one-shot SSH on a ready attachment. Does not start the VM.
