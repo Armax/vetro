@@ -73,7 +73,7 @@ public actor GoldenImageStore {
     private static let sharedCacheGate = SharedGoldenCacheGate()
 
     /// Schema version mixed into the cache key and written on every manifest.
-    public static let schemaVersion = 3
+    public static let schemaVersion = 4
 
     /// Errors raised when a golden cannot be staged, captured, or cloned.
     public enum Failure: Error, Sendable, Equatable {

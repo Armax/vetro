@@ -1625,6 +1625,14 @@ install_desktop() {
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${DESKTOP_PACKAGES}
     fi
 
+    # The cloud kernel ships without DRM/virtio-gpu; the display needs the
+    # full kernel. Takes effect on the next boot.
+    if dpkg -s linux-image-cloud-arm64 >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y linux-image-arm64
+        DEBIAN_FRONTEND=noninteractive apt-get remove -y --purge \
+            linux-image-cloud-arm64 "linux-image-*-cloud-arm64"
+    fi
+
     install -d -m 0755 /etc/lightdm/lightdm.conf.d
     cat >/etc/lightdm/lightdm.conf.d/10-vetro.conf <<'CONF'
 [Seat:*]

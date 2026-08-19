@@ -23,7 +23,7 @@ struct AddVMProjectRequest: Identifiable {
 @MainActor
 @Observable
 final class UIState {
-    enum View { case app, settings }
+    enum View: Equatable { case app, settings, desktop(UUID) }
     enum SettingsTab: String, CaseIterable {
         case general = "General"
         case appearance = "Appearance"

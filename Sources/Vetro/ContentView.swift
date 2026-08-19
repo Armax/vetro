@@ -45,6 +45,8 @@ struct ContentView: View {
                     } else {
                         EmptyMainView()
                     }
+                case .desktop(let vmID):
+                    DesktopPane(vmID: vmID)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

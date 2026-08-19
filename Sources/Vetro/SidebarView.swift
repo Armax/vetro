@@ -457,7 +457,6 @@ private struct EnvironmentGroup: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(AppSettings.self) private var settings
     @Environment(UIState.self) private var ui
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let theme = settings.theme
@@ -553,7 +552,7 @@ private struct EnvironmentGroup: View {
 
             if let vm = desktopVM {
                 row.contextMenu {
-                    Button("Show Desktop") { openWindow(id: "vm-desktop", value: vm.id) }
+                    Button("Show Desktop") { ui.view = .desktop(vm.id) }
                         .disabled(vm.state != .ready)
                 }
             } else {
