@@ -3390,6 +3390,7 @@ final class VMStore {
         refreshSettings(id)
         refreshDiskUsage(id)
 
+        var restartForDesktopSetup = false
         do {
             let initialStatus = try await controller.provisioningStatus()
             if initialStatus.state(for: .all) != .done {
@@ -3445,6 +3446,10 @@ final class VMStore {
                             }
                         }
                     }
+                    // First-boot provisioning installs the desktop kernel and
+                    // graphical.target, which only take effect on the next
+                    // boot. Golden clones already carry them and skip this.
+                    restartForDesktopSetup = vm(id)?.desktopEnabled == true
                 }
             } else {
                 mutateVM(id) { $0.customScriptFailed = initialStatus.customScriptFailed }
@@ -3465,8 +3470,17 @@ final class VMStore {
             // is usable now, and one wedged probe would otherwise leave Stop
             // refusing with vmBusy for the rest of the boot.
             runtime.postReadyTask?.cancel()
-            runtime.postReadyTask = Task { [weak self] in
+            runtime.postReadyTask = Task { [weak self, restartForDesktopSetup] in
                 guard let self else { return }
+                if restartForDesktopSetup {
+                    // A fresh task: startVM cancels postReadyTask, which would
+                    // cancel this very task mid-boot if the restart ran inline.
+                    Task { [weak self] in
+                        await self?.stopVM(id)
+                        await self?.startVM(id)
+                    }
+                    return
+                }
                 await self.refreshAgentVersions(id, runtime: runtime)
                 if self.vm(id)?.pendingFilesystemGrow == true {
                     _ = try? await controller.expandRootFilesystem()
