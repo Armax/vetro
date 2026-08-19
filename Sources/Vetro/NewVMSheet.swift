@@ -14,6 +14,7 @@ struct NewVMSheet: View {
     @State private var diskGB = 32
     @State private var selectedAgents: Set<String>
     @State private var transferAuth = true
+    @State private var desktopEnabled = false
     @State private var setupScript = ""
     @State private var isScriptExpanded = false
     @State private var isCreating = false
@@ -118,6 +119,9 @@ struct NewVMSheet: View {
 
             authToggle(theme: theme)
                 .padding(.top, 12)
+
+            desktopToggle(theme: theme)
+                .padding(.top, 10)
 
             if isScriptExpanded {
                 Text("Setup script")
@@ -284,6 +288,42 @@ struct NewVMSheet: View {
         }
     }
 
+    private func desktopToggle(theme: Theme) -> some View {
+        Hoverable { hovered in
+            Button {
+                desktopEnabled.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(desktopEnabled ? Color(hex: 0x7a9bff, alpha: 0.9) : theme.field)
+                            .frame(width: 15, height: 15)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .strokeBorder(
+                                        desktopEnabled ? .white.opacity(0.15) : theme.sideLine,
+                                        lineWidth: 1
+                                    )
+                            }
+                        if desktopEnabled {
+                            Text("✓")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    Text("Desktop")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.t1)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(hovered ? theme.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private func sheetButton(
         _ title: String,
         tint: Color,
@@ -323,7 +363,8 @@ struct NewVMSheet: View {
             diskSizeGB: diskGB,
             agents: Self.agentNames.filter { selectedAgents.contains($0) },
             transferAuth: transferAuth,
-            customScript: trimmedScript.isEmpty ? nil : trimmedScript
+            customScript: trimmedScript.isEmpty ? nil : trimmedScript,
+            desktopEnabled: desktopEnabled
         )
         let project = attachingProject
         dismiss()

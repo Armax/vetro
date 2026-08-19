@@ -1,6 +1,17 @@
 import Darwin
 import Foundation
-import Virtualization
+public import Virtualization
+
+/// Main-queue-confined handle for a `VZVirtualMachineView`. Only vended for
+/// desktop VMs, whose machine runs on `DispatchQueue.main`, so the wrapped
+/// object is only ever touched from the main thread.
+public struct VMDisplayHandle: @unchecked Sendable {
+    public let virtualMachine: VZVirtualMachine
+
+    public init(virtualMachine: VZVirtualMachine) {
+        self.virtualMachine = virtualMachine
+    }
+}
 
 /// Queue-confined bridge around Virtualization.framework's callback and delegate APIs.
 // Safety: every VZ object and mutable field is accessed only on vmQueue; public methods enqueue work there.
@@ -23,6 +34,7 @@ final class VZVirtualMachineRuntime: NSObject, @unchecked Sendable,
     }
 
     private let vmQueue: DispatchQueue
+    private let useMainQueue: Bool
     private let virtualMachine: VZVirtualMachine
     private let readinessContinuation: AsyncStream<String>.Continuation
     private let stopContinuation: AsyncStream<StopEvent>.Continuation
@@ -67,8 +79,12 @@ final class VZVirtualMachineRuntime: NSObject, @unchecked Sendable,
     private var socketBuffers: [Int32: Data] = [:]
     private var socketRoles: [Int32: SocketRole] = [:]
 
-    init(configuration: VZVirtualMachineConfiguration) {
-        let queue = DispatchQueue(label: "com.vetro.vmkit.virtual-machine")
+    init(configuration: VZVirtualMachineConfiguration, useMainQueue: Bool = false) {
+        // VZVirtualMachineView requires a main-queue VM; headless VMs keep the
+        // private queue. Nothing here uses queue.sync, so main is deadlock-free.
+        let queue = useMainQueue
+            ? DispatchQueue.main
+            : DispatchQueue(label: "com.vetro.vmkit.virtual-machine")
         let readinessPair = AsyncStream<String>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -76,6 +92,7 @@ final class VZVirtualMachineRuntime: NSObject, @unchecked Sendable,
             bufferingPolicy: .bufferingNewest(1)
         )
         self.vmQueue = queue
+        self.useMainQueue = useMainQueue
         self.virtualMachine = VZVirtualMachine(
             configuration: configuration,
             queue: queue
@@ -91,6 +108,13 @@ final class VZVirtualMachineRuntime: NSObject, @unchecked Sendable,
         readinessContinuation.finish()
         stopContinuation.finish()
     }
+
+    /// A main-queue-confined display handle, or `nil` for headless (private-queue) VMs.
+    func displayHandle() -> VMDisplayHandle? {
+        guard useMainQueue else { return nil }
+        return VMDisplayHandle(virtualMachine: virtualMachine)
+    }
+
 
     func setHookEventHandler(_ handler: (@Sendable (UUID?, String, String) -> Void)?) {
         vmQueue.async { [self] in

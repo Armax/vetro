@@ -7,6 +7,8 @@ readonly LOG_FILE="/var/log/vetro-provision.log"
 readonly STATUS_DIRECTORY="/var/lib/vetro"
 readonly STATUS_FILE="${STATUS_DIRECTORY}/provision-status"
 readonly AGENTS_CONF="/etc/vetro/agents.conf"
+readonly DESKTOP_CONF="/etc/vetro/desktop.conf"
+readonly DESKTOP_PACKAGES="xfce4 lightdm spice-vdagent"
 readonly CUSTOM_SCRIPT="/usr/local/lib/vetro/custom-setup.sh"
 readonly CUSTOM_SCRIPT_LOG="${STATUS_DIRECTORY}/custom-script.log"
 readonly GROK_PATH_LINE='export PATH="$HOME/.grok/bin:$HOME/.local/bin:$PATH"'
@@ -30,6 +32,7 @@ readonly -a PROVISION_PHASES=(
     codex
     grok
     workdir
+    desktop
     prune
 )
 readonly -a PRUNED_TIMERS=(
@@ -63,6 +66,9 @@ case "${mode}" in
     update-agents|update-agent)
         current_phase="update"
         ;;
+    desktop)
+        current_phase="desktop"
+        ;;
 esac
 
 append_marker() {
@@ -90,8 +96,9 @@ if [[ "${mode}" == "update-agent" ]]; then
         echo "usage: provision.sh update-agent {claude|codex|grok}"
         false
     fi
-elif (( $# > 1 )) || [[ "${mode}" != "provision" && "${mode}" != "update-agents" ]]; then
-    echo "usage: provision.sh [update-agents|update-agent <name>]"
+elif (( $# > 1 )) \
+    || [[ "${mode}" != "provision" && "${mode}" != "update-agents" && "${mode}" != "desktop" ]]; then
+    echo "usage: provision.sh [update-agents|update-agent <name>|desktop]"
     false
 fi
 
@@ -1598,6 +1605,45 @@ EXCLUDE
     install -d -o vetro -g vetro /workspace
 }
 
+desktop_is_enabled() {
+    [[ -r "${DESKTOP_CONF}" ]] && grep -Fqx "DESKTOP=1" "${DESKTOP_CONF}"
+}
+
+install_desktop() {
+    local package
+    local all_installed=true
+    for package in ${DESKTOP_PACKAGES}; do
+        if ! package_is_installed "${package}"; then
+            all_installed=false
+            break
+        fi
+    done
+    if [[ "${all_installed}" != true ]]; then
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${DESKTOP_PACKAGES}
+    fi
+
+    install -d -m 0755 /etc/lightdm/lightdm.conf.d
+    cat >/etc/lightdm/lightdm.conf.d/10-vetro.conf <<'CONF'
+[Seat:*]
+autologin-user=vetro
+autologin-session=xfce
+CONF
+    chmod 0644 /etc/lightdm/lightdm.conf.d/10-vetro.conf
+
+    systemctl enable spice-vdagentd || true
+    systemctl set-default graphical.target
+}
+
+run_desktop_phase() {
+    if desktop_is_enabled; then
+        run_phase desktop install_desktop
+    else
+        skip_phase desktop
+    fi
+}
+
 record_boot_analysis() {
     local label="$1"
     local blame_file
@@ -1726,6 +1772,20 @@ if [[ "${mode}" == "update-agents" ]]; then
     exit 0
 fi
 
+# Explicit post-provision enablement: install XFCE now regardless of
+# desktop.conf (cloud-init is disabled after first boot). Hardware attaches
+# on the next restart.
+if [[ "${mode}" == "desktop" ]]; then
+    if ! phase_is_done desktop; then
+        current_phase="desktop"
+        append_marker "PHASE:desktop:START"
+        install_desktop
+        append_marker "PHASE:desktop:DONE"
+        current_phase="all"
+    fi
+    exit 0
+fi
+
 if provisioning_is_complete; then
     if ! phase_is_done all; then
         append_marker "PHASE:all:DONE"
@@ -1739,6 +1799,7 @@ run_selected_agent_phase claude install_claude
 run_selected_agent_phase codex install_codex
 run_selected_agent_phase grok install_grok
 run_phase workdir create_work_directory
+run_desktop_phase
 run_phase prune prune_boot
 run_custom_phase
 

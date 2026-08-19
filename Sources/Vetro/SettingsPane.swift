@@ -504,6 +504,7 @@ private struct VMTab: View {
                 agentsSection(vm, theme: theme)
                 idleStopRow(vm)
                 networkAccessRow(vm)
+                desktopAccessRow(vm)
                 if vm.customScriptFailed {
                     customScriptWarningRow(vm, theme: theme)
                 }
@@ -1265,6 +1266,34 @@ private struct VMTab: View {
                     set: { on in
                         Task { @MainActor in
                             await vms.setNetworkEnabled(on, on: vm.id)
+                        }
+                    }
+                ))
+            }
+        }
+    }
+
+    private func desktopAccessRow(_ vm: VM) -> some View {
+        let theme = settings.theme
+        return CardRow(title: "Desktop", divider: true) {
+            HStack(spacing: 10) {
+                if vm.desktopChangePending {
+                    Text("applies after restart")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(theme.orange.opacity(0.14), in: Capsule())
+                        .overlay {
+                            Capsule().strokeBorder(theme.orange.opacity(0.20), lineWidth: 1)
+                        }
+                }
+
+                GlassToggle(isOn: Binding(
+                    get: { vm.desktopEnabled },
+                    set: { on in
+                        Task { @MainActor in
+                            await vms.setDesktopEnabled(on, on: vm.id)
                         }
                     }
                 ))

@@ -73,7 +73,7 @@ public actor GoldenImageStore {
     private static let sharedCacheGate = SharedGoldenCacheGate()
 
     /// Schema version mixed into the cache key and written on every manifest.
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     /// Errors raised when a golden cannot be staged, captured, or cloned.
     public enum Failure: Error, Sendable, Equatable {
@@ -105,7 +105,8 @@ public actor GoldenImageStore {
     /// Inputs that participate in the golden cache key.
     ///
     /// CPU, memory, disk size, MAC address, and network are intentionally
-    /// excluded so hardware-only differences reuse the same golden.
+    /// excluded so hardware-only differences reuse the same golden. Desktop is
+    /// included because it installs XFCE packages into the guest.
     public struct Inputs: Sendable, Equatable {
         /// Agent CLIs selected for first-boot installation.
         public var installAgents: [String]
@@ -113,17 +114,26 @@ public actor GoldenImageStore {
         /// Optional guest setup script; `nil` or whitespace hashes as `none`.
         public var customScript: String?
 
+        /// Whether the guest provisions the XFCE desktop environment.
+        public var desktopEnabled: Bool
+
         /// Creates cache-key inputs from the provision-affecting settings.
-        public init(installAgents: [String], customScript: String? = nil) {
+        public init(
+            installAgents: [String],
+            customScript: String? = nil,
+            desktopEnabled: Bool = false
+        ) {
             self.installAgents = installAgents
             self.customScript = customScript
+            self.desktopEnabled = desktopEnabled
         }
 
         /// Creates cache-key inputs from persisted VM settings.
         public init(_ settings: VMSettings) {
             self.init(
                 installAgents: settings.installAgents,
-                customScript: settings.customScript
+                customScript: settings.customScript,
+                desktopEnabled: settings.desktopEnabled
             )
         }
     }
@@ -136,6 +146,7 @@ public actor GoldenImageStore {
         public var installAgents: [String]
         public var provisionScriptSHA256: String
         public var customScriptSHA256: String
+        public var desktopEnabled: Bool
         public var donorDiskSizeGB: Int
         public var createdAt: Date
 
@@ -146,6 +157,7 @@ public actor GoldenImageStore {
             installAgents: [String],
             provisionScriptSHA256: String,
             customScriptSHA256: String,
+            desktopEnabled: Bool = false,
             donorDiskSizeGB: Int,
             createdAt: Date
         ) {
@@ -155,6 +167,7 @@ public actor GoldenImageStore {
             self.installAgents = installAgents
             self.provisionScriptSHA256 = provisionScriptSHA256
             self.customScriptSHA256 = customScriptSHA256
+            self.desktopEnabled = desktopEnabled
             self.donorDiskSizeGB = donorDiskSizeGB
             self.createdAt = createdAt
         }
@@ -336,6 +349,7 @@ public actor GoldenImageStore {
             installAgents: Self.normalizedAgents(inputs.installAgents),
             provisionScriptSHA256: provisionScriptSHA256(),
             customScriptSHA256: Self.customScriptSHA256(inputs.customScript),
+            desktopEnabled: inputs.desktopEnabled,
             donorDiskSizeGB: donorDiskSizeGB,
             createdAt: createdAt
         )
@@ -618,6 +632,7 @@ public actor GoldenImageStore {
             Self.normalizedAgents(inputs.installAgents).joined(separator: ","),
             try provisionScriptSHA256(),
             Self.customScriptSHA256(inputs.customScript),
+            inputs.desktopEnabled ? "desktop" : "headless",
         ]
         return lines.joined(separator: "\n") + "\n"
     }

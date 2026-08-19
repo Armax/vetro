@@ -457,6 +457,7 @@ private struct EnvironmentGroup: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(AppSettings.self) private var settings
     @Environment(UIState.self) private var ui
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let theme = settings.theme
@@ -507,9 +508,14 @@ private struct EnvironmentGroup: View {
         }
     }
 
+    private var desktopVM: VM? {
+        if case .vm(let vm) = kind, vm.desktopEnabled { return vm }
+        return nil
+    }
+
     private func environmentRow(_ theme: Theme) -> some View {
         Hoverable { hovered in
-            HStack(spacing: 7) {
+            let row = HStack(spacing: 7) {
                 Text(open ? "▾" : "▸")
                     .font(.system(size: 9))
                     .foregroundStyle(theme.t3)
@@ -544,6 +550,15 @@ private struct EnvironmentGroup: View {
             .glassHighlight(hovered, tint: theme.hover)
             .contentShape(Rectangle())
             .onTapGesture { open.toggle() }
+
+            if let vm = desktopVM {
+                row.contextMenu {
+                    Button("Show Desktop") { openWindow(id: "vm-desktop", value: vm.id) }
+                        .disabled(vm.state != .ready)
+                }
+            } else {
+                row
+            }
         }
     }
 

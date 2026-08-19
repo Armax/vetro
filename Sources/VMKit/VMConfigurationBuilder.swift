@@ -146,6 +146,31 @@ public struct VMConfigurationBuilder {
         console.attachment = consoleAttachment
         configuration.serialPorts = [console]
 
+        if settings.desktopEnabled {
+            let graphics = VZVirtioGraphicsDeviceConfiguration()
+            graphics.scanouts = [
+                VZVirtioGraphicsScanoutConfiguration(widthInPixels: 1_920, heightInPixels: 1_200),
+            ]
+            configuration.graphicsDevices = [graphics]
+
+            configuration.keyboards = [VZUSBKeyboardConfiguration()]
+            configuration.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+
+            let soundDevice = VZVirtioSoundDeviceConfiguration()
+            let outputStream = VZVirtioSoundDeviceOutputStreamConfiguration()
+            outputStream.sink = VZHostAudioOutputStreamSink()
+            soundDevice.streams = [outputStream]
+            configuration.audioDevices = [soundDevice]
+
+            // Separate console device carries the Spice agent for clipboard sharing.
+            let spicePort = VZVirtioConsolePortConfiguration()
+            spicePort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
+            spicePort.attachment = VZSpiceAgentPortAttachment()
+            let spiceConsole = VZVirtioConsoleDeviceConfiguration()
+            spiceConsole.ports[0] = spicePort
+            configuration.consoleDevices = [spiceConsole]
+        }
+
         try configuration.validate()
         return configuration
     }

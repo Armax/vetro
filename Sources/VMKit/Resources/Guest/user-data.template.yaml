@@ -61,6 +61,10 @@ write_files:
     owner: root:root
     permissions: '0644'
     content: "__VETRO_AGENTS_CONF__"
+  - path: /etc/vetro/desktop.conf
+    owner: root:root
+    permissions: '0644'
+    content: "DESKTOP=__VETRO_DESKTOP__"
 __VETRO_CUSTOM_SETUP_WRITE_FILE__
   - path: /etc/systemd/system/vetro-guest-agent.service
     owner: root:root

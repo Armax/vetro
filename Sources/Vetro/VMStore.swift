@@ -36,6 +36,8 @@ struct VM: Identifiable, Hashable {
     var idleStopMinutes: Int?
     var networkEnabled: Bool
     var networkChangePending: Bool
+    var desktopEnabled: Bool
+    var desktopChangePending: Bool
     var pendingFilesystemGrow: Bool
     var customScriptFailed: Bool
     var hasCustomScript: Bool
@@ -156,6 +158,7 @@ struct NewVMConfiguration: Sendable, Equatable {
     var agents: [String]
     var transferAuth: Bool
     var customScript: String?
+    var desktopEnabled: Bool = false
 
     static func defaults(name: String) -> NewVMConfiguration {
         let settings = VMSettings.defaults(
@@ -252,6 +255,7 @@ private final class VMRuntime {
     var sawFreshUpdateStatus = false
     var lastBusy = Date.now
     var bootedNetworkEnabled: Bool?
+    var bootedDesktopEnabled: Bool?
     var memoryReclaimed = false
     var mirroredPorts: Set<UInt16> = []
     var conflictPorts: Set<UInt16> = []
@@ -396,6 +400,7 @@ final class VMStore {
     @ObservationIgnored private var isTerminating = false
     @ObservationIgnored private var liveLoginMirrors: [UUID: (vmID: UUID, guestPort: UInt16)] = [:]
     @ObservationIgnored private var refusedHostMirrorCooldowns: [HostMirrorCooldownKey: Date] = [:]
+    @ObservationIgnored private var openDesktopWindows: [UUID: Int] = [:]
 
     private static let transferExcludes = [
         "node_modules/",
@@ -1618,6 +1623,78 @@ final class VMStore {
             }
         } catch {
             record(error: error)
+        }
+    }
+
+    func setDesktopEnabled(_ on: Bool, on vm: VM) async {
+        await setDesktopEnabled(on, on: vm.id)
+    }
+
+    func setDesktopEnabled(_ on: Bool, on vmID: UUID) async {
+        guard let current = vm(vmID) else {
+            record(error: VMOperationError.vmNotFound)
+            return
+        }
+        do {
+            try await updateSettings(for: vmID) { $0.desktopEnabled = on }
+            let running: Bool = switch current.state {
+            case .ready, .starting, .provisioning, .downloading: true
+            case .stopped, .error: false
+            }
+            let booted = runtimes[vmID]?.bootedDesktopEnabled
+            mutateVM(vmID) {
+                $0.desktopEnabled = on
+                $0.desktopChangePending = running && booted != nil && booted != on
+            }
+            // Install XFCE live on a ready VM; the graphics hardware still
+            // attaches on the next restart.
+            if on, current.state == .ready {
+                await installDesktop(on: vmID)
+            }
+        } catch {
+            record(error: error)
+        }
+    }
+
+    private func installDesktop(on vmID: UUID) async {
+        guard let runtime = runtimes[vmID], let controller = runtime.controller else {
+            return
+        }
+        guard !runtime.busy else {
+            record(error: VMOperationError.vmBusy)
+            return
+        }
+        runtime.busy = true
+        defer {
+            runtime.busy = false
+            runtime.lastBusy = .now
+        }
+        do {
+            _ = try await controller.installDesktop()
+        } catch {
+            record(error: error)
+        }
+    }
+
+    /// The running desktop VM's display handle for a `VZVirtualMachineView`.
+    func desktopHandle(for vmID: UUID) async -> VMDisplayHandle? {
+        guard let controller = runtimes[vmID]?.controller else { return nil }
+        return await controller.displayHandle()
+    }
+
+    /// Marks a desktop window open so idle memory reclaim leaves the guest alone.
+    func desktopWindowOpened(_ vmID: UUID) {
+        openDesktopWindows[vmID, default: 0] += 1
+        Task { await restoreMemoryIfReclaimed(vmID) }
+    }
+
+    /// Marks a desktop window closed; reclaim resumes once the last one closes.
+    func desktopWindowClosed(_ vmID: UUID) {
+        guard let count = openDesktopWindows[vmID] else { return }
+        if count <= 1 {
+            openDesktopWindows.removeValue(forKey: vmID)
+        } else {
+            openDesktopWindows[vmID] = count - 1
         }
     }
 
@@ -3135,10 +3212,12 @@ final class VMStore {
             $0.isVerifyingImage = false
             $0.errorMessage = nil
             $0.networkChangePending = false
+            $0.desktopChangePending = false
             $0.customScriptFailed = false
             if let creationPhases { $0.phases = creationPhases }
         }
         runtime.bootedNetworkEnabled = vm(id)?.networkEnabled ?? true
+        runtime.bootedDesktopEnabled = vm(id)?.desktopEnabled ?? false
 
         let controller = controller(for: id, runtime: runtime)
         await configureController(controller, vmID: id)
@@ -3230,6 +3309,7 @@ final class VMStore {
             $0.isVerifyingImage = false
             $0.state = creating ? .provisioning : .starting
             $0.networkChangePending = $0.networkEnabled != (runtime.bootedNetworkEnabled ?? $0.networkEnabled)
+            $0.desktopChangePending = $0.desktopEnabled != (runtime.bootedDesktopEnabled ?? $0.desktopEnabled)
         }
         refreshSettings(id)
         refreshDiskUsage(id)
@@ -4014,6 +4094,8 @@ final class VMStore {
             idleStopMinutes: nil,
             networkEnabled: true,
             networkChangePending: false,
+            desktopEnabled: false,
+            desktopChangePending: false,
             pendingFilesystemGrow: pendingFilesystemGrow,
             customScriptFailed: false,
             hasCustomScript: false
@@ -4087,6 +4169,7 @@ final class VMStore {
             vm.diskMaxGB = Double(settings.diskSizeGB)
             vm.idleStopMinutes = settings.idleStopMinutes
             vm.networkEnabled = settings.networkEnabled
+            vm.desktopEnabled = settings.desktopEnabled
             vm.hasCustomScript = Self.hasCustomScript(settings.customScript)
             let existing = Dictionary(uniqueKeysWithValues: vm.agents.map { ($0.name, $0) })
             vm.agents = selected.map { name in
@@ -4106,6 +4189,7 @@ final class VMStore {
             settings.installAgents = Self.normalizedAgents(configuration.agents)
             settings.transferAuthFromMac = configuration.transferAuth
             settings.customScript = Self.normalizedCustomScript(configuration.customScript)
+            settings.desktopEnabled = configuration.desktopEnabled
         }
     }
 
@@ -4173,6 +4257,12 @@ final class VMStore {
             {
                 runtime.lastBusy = now
                 await stopVM(model.id)
+                continue
+            }
+            // An open desktop window keeps the guest interactively in use even
+            // without SSH/agent activity, so never deflate its balloon.
+            if openDesktopWindows[model.id] != nil {
+                await restoreMemoryIfReclaimed(model.id)
                 continue
             }
             if !runtime.memoryReclaimed, idleSeconds >= 120 {

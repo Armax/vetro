@@ -152,6 +152,11 @@ public actor VMController {
         activeForwardedPort
     }
 
+    /// The running desktop VM's display handle, or `nil` for headless VMs.
+    public func displayHandle() -> VMDisplayHandle? {
+        runtime?.displayHandle()
+    }
+
     /// Starts a host loopback listener that forwards to `guestPort` inside the guest.
     public func startPortForward(guestPort: UInt16) async throws -> UInt16 {
         guard let runtime else {
@@ -282,7 +287,8 @@ public actor VMController {
                 publicKey: publicKey,
                 hostname: hostname,
                 installAgents: settings.installAgents,
-                customScript: settings.customScript
+                customScript: settings.customScript,
+                desktopEnabled: settings.desktopEnabled
             )
             try Task.checkCancellation()
             let seedReadySeconds = Self.seconds(seedStart.duration(to: clock.now))
@@ -293,7 +299,10 @@ public actor VMController {
                 sharedDirectory: sharedDirectory
             )
             try Task.checkCancellation()
-            let runtime = VZVirtualMachineRuntime(configuration: configuration)
+            let runtime = VZVirtualMachineRuntime(
+                configuration: configuration,
+                useMainQueue: settings.desktopEnabled
+            )
             runtime.setHookEventHandler(hookEventHandler)
             runtime.setPortEventHandler(portEventHandler)
             runtime.setHostMirrorAllowlist(hostMirrorAllowlist)
@@ -503,6 +512,34 @@ public actor VMController {
         if commandResult.status == 0
             || (status.operation == .update && status.failedPhase != nil)
         {
+            return status
+        }
+        throw Failure.agentUpdateCommandFailed(
+            status: commandResult.status,
+            stderr: commandResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    /// Installs the XFCE desktop live by running the `desktop` provision phase.
+    ///
+    /// Used when the desktop toggle is enabled on an already-provisioned VM;
+    /// the graphics hardware still attaches on the next restart.
+    ///
+    /// - Returns: The authoritative provisioning snapshot written by the guest.
+    /// - Throws: An SSH/process failure or a command failure without a marker.
+    @discardableResult
+    public func installDesktop() async throws -> VMProvisioningStatus {
+        guard activeIPAddress != nil, let activeForwardedPort else {
+            throw Failure.invalidState(lifecycleState)
+        }
+        let commandResult = try await sshClient.exec(
+            host: "127.0.0.1",
+            port: activeForwardedPort,
+            command: "sudo /usr/local/lib/vetro/provision.sh desktop",
+            timeoutSeconds: 1_800
+        )
+        let status = try await provisioningStatus()
+        if commandResult.status == 0 || status.failedPhase != nil {
             return status
         }
         throw Failure.agentUpdateCommandFailed(

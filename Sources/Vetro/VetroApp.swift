@@ -85,6 +85,14 @@ struct VetroApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+
+        WindowGroup("Desktop", id: "vm-desktop", for: UUID.self) { $vmID in
+            if let vmID {
+                DesktopWindow(vmID: vmID)
+                    .environment(vms)
+                    .environment(settings)
+            }
+        }
     }
 
     private func splitSelected(_ direction: ghostty_action_split_direction_e) {

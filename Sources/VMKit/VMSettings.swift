@@ -16,6 +16,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         case customScript
         case idleStopMinutes
         case networkEnabled
+        case desktopEnabled
         case goldenCaptureCacheKey
     }
 
@@ -52,6 +53,9 @@ public struct VMSettings: Codable, Equatable, Sendable {
     /// Whether the guest receives a NAT network device. SSH still rides vsock.
     public var networkEnabled: Bool
 
+    /// Whether the guest gets a graphics stack and an XFCE desktop environment.
+    public var desktopEnabled: Bool
+
     /// Cache key of a golden this VM should capture on the next clean stop.
     public var goldenCaptureCacheKey: String?
 
@@ -80,6 +84,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         customScript: String? = nil,
         idleStopMinutes: Int? = nil,
         networkEnabled: Bool = true,
+        desktopEnabled: Bool = false,
         goldenCaptureCacheKey: String? = nil
     ) {
         self.cpus = cpus
@@ -92,6 +97,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         self.customScript = customScript
         self.idleStopMinutes = idleStopMinutes
         self.networkEnabled = networkEnabled
+        self.desktopEnabled = desktopEnabled
         self.goldenCaptureCacheKey = goldenCaptureCacheKey
     }
 
@@ -122,6 +128,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         customScript = try container.decodeIfPresent(String.self, forKey: .customScript)
         idleStopMinutes = try container.decodeIfPresent(Int.self, forKey: .idleStopMinutes)
         networkEnabled = try container.decodeIfPresent(Bool.self, forKey: .networkEnabled) ?? true
+        desktopEnabled = try container.decodeIfPresent(Bool.self, forKey: .desktopEnabled) ?? false
         goldenCaptureCacheKey = try container.decodeIfPresent(
             String.self,
             forKey: .goldenCaptureCacheKey
