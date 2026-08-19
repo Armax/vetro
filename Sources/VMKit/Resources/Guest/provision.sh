@@ -8,7 +8,8 @@ readonly STATUS_DIRECTORY="/var/lib/vetro"
 readonly STATUS_FILE="${STATUS_DIRECTORY}/provision-status"
 readonly AGENTS_CONF="/etc/vetro/agents.conf"
 readonly DESKTOP_CONF="/etc/vetro/desktop.conf"
-readonly DESKTOP_PACKAGES="xfce4 lightdm spice-vdagent"
+# xorg is explicit: with --no-install-recommends, lightdm/xfce4 pull no X server.
+readonly DESKTOP_PACKAGES="xorg xfce4 lightdm lightdm-gtk-greeter dbus-x11 spice-vdagent"
 readonly CUSTOM_SCRIPT="/usr/local/lib/vetro/custom-setup.sh"
 readonly CUSTOM_SCRIPT_LOG="${STATUS_DIRECTORY}/custom-script.log"
 readonly GROK_PATH_LINE='export PATH="$HOME/.grok/bin:$HOME/.local/bin:$PATH"'

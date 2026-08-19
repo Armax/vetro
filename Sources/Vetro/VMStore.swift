@@ -4259,9 +4259,9 @@ final class VMStore {
                 await stopVM(model.id)
                 continue
             }
-            // An open desktop window keeps the guest interactively in use even
-            // without SSH/agent activity, so never deflate its balloon.
-            if openDesktopWindows[model.id] != nil {
+            // A desktop guest keeps XFCE/Xorg resident with no swap; squeezing
+            // it to the headless floor OOM-thrashes the VM. Never reclaim.
+            if model.desktopEnabled || openDesktopWindows[model.id] != nil {
                 await restoreMemoryIfReclaimed(model.id)
                 continue
             }
