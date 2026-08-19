@@ -402,6 +402,7 @@ private struct PinnedRow: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(AppSettings.self) private var settings
     @Environment(VMStore.self) private var vms
+    @Environment(UIState.self) private var ui
 
     private var contextLabel: String {
         switch session.target {
@@ -417,6 +418,7 @@ private struct PinnedRow: View {
         Hoverable { hovered in
             Button {
                 sessions.selectedSessionID = session.id
+                ui.view = .app
             } label: {
                 HStack(spacing: 8) {
                     Text("★")
@@ -457,6 +459,7 @@ private struct EnvironmentGroup: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(AppSettings.self) private var settings
     @Environment(UIState.self) private var ui
+    @Environment(VMStore.self) private var vms
 
     var body: some View {
         let theme = settings.theme
@@ -464,6 +467,9 @@ private struct EnvironmentGroup: View {
             environmentRow(theme)
             if open {
                 VStack(spacing: 2) {
+                    if let vm = desktopVM {
+                        DisplayRow(vm: vm)
+                    }
                     ForEach(filteredSessions) { session in
                         ChatRow(session: session)
                     }
@@ -550,10 +556,22 @@ private struct EnvironmentGroup: View {
             .contentShape(Rectangle())
             .onTapGesture { open.toggle() }
 
-            if let vm = desktopVM {
+            if case .vm(let vm) = kind {
                 row.contextMenu {
-                    Button("Show Desktop") { ui.view = .desktop(vm.id) }
+                    Button("Start") { Task { await vms.startVM(vm.id) } }
+                        .disabled(vm.state != .stopped && vm.state != .error)
+                    Button("Stop") { Task { await vms.stopVM(vm.id) } }
                         .disabled(vm.state != .ready)
+                    if vm.desktopEnabled {
+                        Button("Show Display") { ui.view = .desktop(vm.id) }
+                            .disabled(vm.state != .ready)
+                    }
+                    Divider()
+                    Button("Manage") {
+                        vms.selectedVMID = vm.id
+                        ui.settingsTab = .vm
+                        ui.view = .settings
+                    }
                 }
             } else {
                 row
@@ -864,10 +882,50 @@ private struct ProjectGroup: View {
 
 // MARK: - Chat row
 
+private struct DisplayRow: View {
+    let vm: VM
+    @Environment(AppSettings.self) private var settings
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        let theme = settings.theme
+        let selected = ui.view == .desktop(vm.id)
+        Hoverable { hovered in
+            Button {
+                ui.view = .desktop(vm.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "display")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.accentSoft)
+                        .frame(width: 10, height: 10)
+                    Text("Display")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.t1)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5.5)
+                .glassHighlight(selected || hovered, tint: selected ? theme.sel : theme.hover)
+                .overlay {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(theme.selRing, lineWidth: 1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 private struct ChatRow: View {
     let session: Session
     @Environment(SessionManager.self) private var sessions
     @Environment(AppSettings.self) private var settings
+    @Environment(UIState.self) private var ui
 
     var body: some View {
         let theme = settings.theme
@@ -876,6 +934,7 @@ private struct ChatRow: View {
         Hoverable { hovered in
             Button {
                 sessions.selectedSessionID = session.id
+                ui.view = .app
             } label: {
                 HStack(spacing: 8) {
                     Group {
