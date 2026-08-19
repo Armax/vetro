@@ -288,7 +288,8 @@ public actor VMController {
                 hostname: hostname,
                 installAgents: settings.installAgents,
                 customScript: settings.customScript,
-                desktopEnabled: settings.desktopEnabled
+                desktopEnabled: settings.desktopEnabled,
+                cuaEnabled: settings.cuaDriverEnabled
             )
             try Task.checkCancellation()
             let seedReadySeconds = Self.seconds(seedStart.duration(to: clock.now))
@@ -536,6 +537,34 @@ public actor VMController {
             host: "127.0.0.1",
             port: activeForwardedPort,
             command: "sudo /usr/local/lib/vetro/provision.sh desktop",
+            timeoutSeconds: 1_800
+        )
+        let status = try await provisioningStatus()
+        if commandResult.status == 0 || status.failedPhase != nil {
+            return status
+        }
+        throw Failure.agentUpdateCommandFailed(
+            status: commandResult.status,
+            stderr: commandResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    /// Installs the Cua Driver live by running the `cua` provision phase.
+    ///
+    /// Used when Computer Use is enabled on an already-provisioned VM and on
+    /// every boot to re-register the MCP server that golden captures exclude.
+    ///
+    /// - Returns: The authoritative provisioning snapshot written by the guest.
+    /// - Throws: An SSH/process failure or a command failure without a marker.
+    @discardableResult
+    public func installCuaDriver() async throws -> VMProvisioningStatus {
+        guard activeIPAddress != nil, let activeForwardedPort else {
+            throw Failure.invalidState(lifecycleState)
+        }
+        let commandResult = try await sshClient.exec(
+            host: "127.0.0.1",
+            port: activeForwardedPort,
+            command: "sudo /usr/local/lib/vetro/provision.sh cua",
             timeoutSeconds: 1_800
         )
         let status = try await provisioningStatus()

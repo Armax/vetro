@@ -15,6 +15,7 @@ struct NewVMSheet: View {
     @State private var selectedAgents: Set<String>
     @State private var transferAuth = true
     @State private var desktopEnabled = false
+    @State private var cuaDriverEnabled = false
     @State private var setupScript = ""
     @State private var isScriptExpanded = false
     @State private var isCreating = false
@@ -121,6 +122,9 @@ struct NewVMSheet: View {
                 .padding(.top, 12)
 
             desktopToggle(theme: theme)
+                .padding(.top, 10)
+
+            cuaToggle(theme: theme)
                 .padding(.top, 10)
 
             if isScriptExpanded {
@@ -292,6 +296,8 @@ struct NewVMSheet: View {
         Hoverable { hovered in
             Button {
                 desktopEnabled.toggle()
+                // Computer Use implies Desktop: disabling Desktop clears it.
+                if !desktopEnabled { cuaDriverEnabled = false }
             } label: {
                 HStack(spacing: 7) {
                     ZStack {
@@ -312,6 +318,44 @@ struct NewVMSheet: View {
                         }
                     }
                     Text("Desktop")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.t1)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(hovered ? theme.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func cuaToggle(theme: Theme) -> some View {
+        Hoverable { hovered in
+            Button {
+                cuaDriverEnabled.toggle()
+                // Computer Use implies Desktop: enabling it force-enables Desktop.
+                if cuaDriverEnabled { desktopEnabled = true }
+            } label: {
+                HStack(spacing: 7) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(cuaDriverEnabled ? Color(hex: 0x7a9bff, alpha: 0.9) : theme.field)
+                            .frame(width: 15, height: 15)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .strokeBorder(
+                                        cuaDriverEnabled ? .white.opacity(0.15) : theme.sideLine,
+                                        lineWidth: 1
+                                    )
+                            }
+                        if cuaDriverEnabled {
+                            Text("✓")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    Text("Computer Use")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.t1)
                 }
@@ -364,7 +408,8 @@ struct NewVMSheet: View {
             agents: Self.agentNames.filter { selectedAgents.contains($0) },
             transferAuth: transferAuth,
             customScript: trimmedScript.isEmpty ? nil : trimmedScript,
-            desktopEnabled: desktopEnabled
+            desktopEnabled: desktopEnabled,
+            cuaDriverEnabled: cuaDriverEnabled
         )
         let project = attachingProject
         dismiss()

@@ -38,6 +38,8 @@ struct VM: Identifiable, Hashable {
     var networkChangePending: Bool
     var desktopEnabled: Bool
     var desktopChangePending: Bool
+    var cuaDriverEnabled: Bool
+    var cuaDriverChangePending: Bool
     var pendingFilesystemGrow: Bool
     var customScriptFailed: Bool
     var hasCustomScript: Bool
@@ -159,6 +161,7 @@ struct NewVMConfiguration: Sendable, Equatable {
     var transferAuth: Bool
     var customScript: String?
     var desktopEnabled: Bool = false
+    var cuaDriverEnabled: Bool = false
 
     static func defaults(name: String) -> NewVMConfiguration {
         let settings = VMSettings.defaults(
@@ -256,6 +259,7 @@ private final class VMRuntime {
     var lastBusy = Date.now
     var bootedNetworkEnabled: Bool?
     var bootedDesktopEnabled: Bool?
+    var bootedCuaDriverEnabled: Bool?
     var memoryReclaimed = false
     var mirroredPorts: Set<UInt16> = []
     var conflictPorts: Set<UInt16> = []
@@ -1636,20 +1640,69 @@ final class VMStore {
             return
         }
         do {
-            try await updateSettings(for: vmID) { $0.desktopEnabled = on }
+            try await updateSettings(for: vmID) {
+                $0.desktopEnabled = on
+                // Computer Use implies Desktop: disabling Desktop clears it.
+                if !on { $0.cuaDriverEnabled = false }
+            }
             let running: Bool = switch current.state {
             case .ready, .starting, .provisioning, .downloading: true
             case .stopped, .error: false
             }
-            let booted = runtimes[vmID]?.bootedDesktopEnabled
+            let bootedDesktop = runtimes[vmID]?.bootedDesktopEnabled
+            let bootedCua = runtimes[vmID]?.bootedCuaDriverEnabled
             mutateVM(vmID) {
                 $0.desktopEnabled = on
-                $0.desktopChangePending = running && booted != nil && booted != on
+                $0.desktopChangePending = running && bootedDesktop != nil && bootedDesktop != on
+                if !on {
+                    $0.cuaDriverEnabled = false
+                    $0.cuaDriverChangePending = running && bootedCua != nil && bootedCua != false
+                }
             }
             // Install XFCE live on a ready VM; the graphics hardware still
             // attaches on the next restart.
             if on, current.state == .ready {
                 await installDesktop(on: vmID)
+            }
+        } catch {
+            record(error: error)
+        }
+    }
+
+    func setCuaDriverEnabled(_ on: Bool, on vm: VM) async {
+        await setCuaDriverEnabled(on, on: vm.id)
+    }
+
+    func setCuaDriverEnabled(_ on: Bool, on vmID: UUID) async {
+        guard let current = vm(vmID) else {
+            record(error: VMOperationError.vmNotFound)
+            return
+        }
+        do {
+            try await updateSettings(for: vmID) {
+                $0.cuaDriverEnabled = on
+                // Computer Use implies Desktop: enabling it force-enables Desktop.
+                if on { $0.desktopEnabled = true }
+            }
+            let running: Bool = switch current.state {
+            case .ready, .starting, .provisioning, .downloading: true
+            case .stopped, .error: false
+            }
+            let bootedCua = runtimes[vmID]?.bootedCuaDriverEnabled
+            let bootedDesktop = runtimes[vmID]?.bootedDesktopEnabled
+            mutateVM(vmID) {
+                $0.cuaDriverEnabled = on
+                $0.cuaDriverChangePending = running && bootedCua != nil && bootedCua != on
+                if on {
+                    $0.desktopEnabled = true
+                    $0.desktopChangePending = running && bootedDesktop != nil && bootedDesktop != true
+                }
+            }
+            // On a ready VM install desktop first, then the Cua Driver; the
+            // graphics hardware still attaches on the next restart.
+            if on, current.state == .ready {
+                await installDesktop(on: vmID)
+                await installCuaDriver(on: vmID)
             }
         } catch {
             record(error: error)
@@ -1671,6 +1724,26 @@ final class VMStore {
         }
         do {
             _ = try await controller.installDesktop()
+        } catch {
+            record(error: error)
+        }
+    }
+
+    private func installCuaDriver(on vmID: UUID) async {
+        guard let runtime = runtimes[vmID], let controller = runtime.controller else {
+            return
+        }
+        guard !runtime.busy else {
+            record(error: VMOperationError.vmBusy)
+            return
+        }
+        runtime.busy = true
+        defer {
+            runtime.busy = false
+            runtime.lastBusy = .now
+        }
+        do {
+            _ = try await controller.installCuaDriver()
         } catch {
             record(error: error)
         }
@@ -3213,11 +3286,13 @@ final class VMStore {
             $0.errorMessage = nil
             $0.networkChangePending = false
             $0.desktopChangePending = false
+            $0.cuaDriverChangePending = false
             $0.customScriptFailed = false
             if let creationPhases { $0.phases = creationPhases }
         }
         runtime.bootedNetworkEnabled = vm(id)?.networkEnabled ?? true
         runtime.bootedDesktopEnabled = vm(id)?.desktopEnabled ?? false
+        runtime.bootedCuaDriverEnabled = vm(id)?.cuaDriverEnabled ?? false
 
         let controller = controller(for: id, runtime: runtime)
         await configureController(controller, vmID: id)
@@ -3310,6 +3385,7 @@ final class VMStore {
             $0.state = creating ? .provisioning : .starting
             $0.networkChangePending = $0.networkEnabled != (runtime.bootedNetworkEnabled ?? $0.networkEnabled)
             $0.desktopChangePending = $0.desktopEnabled != (runtime.bootedDesktopEnabled ?? $0.desktopEnabled)
+            $0.cuaDriverChangePending = $0.cuaDriverEnabled != (runtime.bootedCuaDriverEnabled ?? $0.cuaDriverEnabled)
         }
         refreshSettings(id)
         refreshDiskUsage(id)
@@ -3405,6 +3481,12 @@ final class VMStore {
                 await self.ensureGuestHooks(of: id)
                 await self.ensureCredentials(of: id)
                 await self.ensureAgentAuth(of: id)
+                // Golden captures exclude ~/.claude.json and ~/.codex, so cloned
+                // VMs boot without the cua-driver MCP registration. Re-run the
+                // idempotent registration; it reconciles in seconds.
+                if self.vm(id)?.cuaDriverEnabled == true {
+                    await self.installCuaDriver(on: id)
+                }
             }
         } catch {
             _ = try? await controller.stop()
@@ -4096,6 +4178,8 @@ final class VMStore {
             networkChangePending: false,
             desktopEnabled: false,
             desktopChangePending: false,
+            cuaDriverEnabled: false,
+            cuaDriverChangePending: false,
             pendingFilesystemGrow: pendingFilesystemGrow,
             customScriptFailed: false,
             hasCustomScript: false
@@ -4170,6 +4254,7 @@ final class VMStore {
             vm.idleStopMinutes = settings.idleStopMinutes
             vm.networkEnabled = settings.networkEnabled
             vm.desktopEnabled = settings.desktopEnabled
+            vm.cuaDriverEnabled = settings.cuaDriverEnabled
             vm.hasCustomScript = Self.hasCustomScript(settings.customScript)
             let existing = Dictionary(uniqueKeysWithValues: vm.agents.map { ($0.name, $0) })
             vm.agents = selected.map { name in
@@ -4190,6 +4275,7 @@ final class VMStore {
             settings.transferAuthFromMac = configuration.transferAuth
             settings.customScript = Self.normalizedCustomScript(configuration.customScript)
             settings.desktopEnabled = configuration.desktopEnabled
+            settings.cuaDriverEnabled = configuration.cuaDriverEnabled
         }
     }
 

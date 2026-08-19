@@ -17,6 +17,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         case idleStopMinutes
         case networkEnabled
         case desktopEnabled
+        case cuaDriverEnabled
         case goldenCaptureCacheKey
     }
 
@@ -56,6 +57,9 @@ public struct VMSettings: Codable, Equatable, Sendable {
     /// Whether the guest gets a graphics stack and an XFCE desktop environment.
     public var desktopEnabled: Bool
 
+    /// Whether the guest provisions the Cua Driver and registers it as an MCP server.
+    public var cuaDriverEnabled: Bool
+
     /// Cache key of a golden this VM should capture on the next clean stop.
     public var goldenCaptureCacheKey: String?
 
@@ -85,6 +89,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         idleStopMinutes: Int? = nil,
         networkEnabled: Bool = true,
         desktopEnabled: Bool = false,
+        cuaDriverEnabled: Bool = false,
         goldenCaptureCacheKey: String? = nil
     ) {
         self.cpus = cpus
@@ -98,6 +103,7 @@ public struct VMSettings: Codable, Equatable, Sendable {
         self.idleStopMinutes = idleStopMinutes
         self.networkEnabled = networkEnabled
         self.desktopEnabled = desktopEnabled
+        self.cuaDriverEnabled = cuaDriverEnabled
         self.goldenCaptureCacheKey = goldenCaptureCacheKey
     }
 
@@ -129,6 +135,10 @@ public struct VMSettings: Codable, Equatable, Sendable {
         idleStopMinutes = try container.decodeIfPresent(Int.self, forKey: .idleStopMinutes)
         networkEnabled = try container.decodeIfPresent(Bool.self, forKey: .networkEnabled) ?? true
         desktopEnabled = try container.decodeIfPresent(Bool.self, forKey: .desktopEnabled) ?? false
+        cuaDriverEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .cuaDriverEnabled
+        ) ?? false
         goldenCaptureCacheKey = try container.decodeIfPresent(
             String.self,
             forKey: .goldenCaptureCacheKey

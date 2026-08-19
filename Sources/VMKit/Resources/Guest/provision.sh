@@ -10,6 +10,10 @@ readonly AGENTS_CONF="/etc/vetro/agents.conf"
 readonly DESKTOP_CONF="/etc/vetro/desktop.conf"
 # xorg is explicit: with --no-install-recommends, lightdm/xfce4 pull no X server.
 readonly DESKTOP_PACKAGES="xorg xfce4 lightdm lightdm-gtk-greeter dbus-x11 spice-vdagent"
+readonly CUA_CONF="/etc/vetro/cua.conf"
+readonly CUA_WRAPPER="/usr/local/bin/cua-driver-mcp"
+readonly CUA_BIN="/home/vetro/.local/bin/cua-driver"
+readonly CUA_PACKAGES="libxi6 at-spi2-core"
 readonly CUSTOM_SCRIPT="/usr/local/lib/vetro/custom-setup.sh"
 readonly CUSTOM_SCRIPT_LOG="${STATUS_DIRECTORY}/custom-script.log"
 readonly GROK_PATH_LINE='export PATH="$HOME/.grok/bin:$HOME/.local/bin:$PATH"'
@@ -34,6 +38,7 @@ readonly -a PROVISION_PHASES=(
     grok
     workdir
     desktop
+    cua
     prune
 )
 readonly -a PRUNED_TIMERS=(
@@ -70,6 +75,9 @@ case "${mode}" in
     desktop)
         current_phase="desktop"
         ;;
+    cua)
+        current_phase="cua"
+        ;;
 esac
 
 append_marker() {
@@ -98,8 +106,9 @@ if [[ "${mode}" == "update-agent" ]]; then
         false
     fi
 elif (( $# > 1 )) \
-    || [[ "${mode}" != "provision" && "${mode}" != "update-agents" && "${mode}" != "desktop" ]]; then
-    echo "usage: provision.sh [update-agents|update-agent <name>|desktop]"
+    || [[ "${mode}" != "provision" && "${mode}" != "update-agents" \
+        && "${mode}" != "desktop" && "${mode}" != "cua" ]]; then
+    echo "usage: provision.sh [update-agents|update-agent <name>|desktop|cua]"
     false
 fi
 
@@ -1653,6 +1662,69 @@ run_desktop_phase() {
     fi
 }
 
+cua_is_enabled() {
+    [[ -r "${CUA_CONF}" ]] && grep -Fqx "CUA=1" "${CUA_CONF}"
+}
+
+# Root wrapper resolving PATH, DISPLAY, and the AT-SPI session bus in one
+# place, so no client MCP config needs an env block.
+write_cua_wrapper() {
+    cat >"${CUA_WRAPPER}" <<'WRAPPER'
+#!/bin/bash
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-/home/vetro/.Xauthority}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+exec /home/vetro/.local/bin/cua-driver mcp "$@"
+WRAPPER
+    chmod 0755 "${CUA_WRAPPER}"
+}
+
+# Remove-then-add is idempotent: claude mcp add-json errors on a duplicate name.
+register_cua_mcp() {
+    if agent_is_selected claude && claude_is_installed; then
+        sudo -u vetro bash -lc "claude mcp remove cua-driver >/dev/null 2>&1 || true; claude mcp add-json --scope user cua-driver '{\"command\":\"${CUA_WRAPPER}\",\"args\":[]}'"
+    fi
+    if agent_is_selected codex && codex_is_installed; then
+        sudo -u vetro bash -lc "codex mcp remove cua-driver >/dev/null 2>&1 || true; codex mcp add cua-driver -- ${CUA_WRAPPER}"
+    fi
+    if agent_is_selected grok && grok_is_installed; then
+        sudo -u vetro bash -lc "grok mcp remove cua-driver >/dev/null 2>&1 || true; grok mcp add cua-driver -- ${CUA_WRAPPER}"
+    fi
+}
+
+install_cua() {
+    local package
+    local all_installed=true
+    for package in ${CUA_PACKAGES}; do
+        if ! package_is_installed "${package}"; then
+            all_installed=false
+            break
+        fi
+    done
+    if [[ "${all_installed}" != true ]]; then
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${CUA_PACKAGES}
+    fi
+
+    # Per-user install into ~/.local/bin; the binary survives golden capture.
+    # Unpinned: reproducibility comes from golden snapshots + provision hash.
+    if ! sudo -u vetro test -x "${CUA_BIN}"; then
+        sudo -u vetro bash -c 'CUA_DRIVER_NO_MODIFY_PATH=1 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"'
+    fi
+
+    write_cua_wrapper
+    register_cua_mcp
+}
+
+run_cua_phase() {
+    if cua_is_enabled; then
+        run_phase cua install_cua
+    else
+        skip_phase cua
+    fi
+}
+
 record_boot_analysis() {
     local label="$1"
     local blame_file
@@ -1795,6 +1867,23 @@ if [[ "${mode}" == "desktop" ]]; then
     exit 0
 fi
 
+# Explicit post-provision enablement and every-boot reconcile: golden captures
+# exclude ~/.claude.json and ~/.codex, so cloned VMs lose the MCP registration.
+# When already done, re-run only the wrapper + registration (seconds).
+if [[ "${mode}" == "cua" ]]; then
+    if ! phase_is_done cua; then
+        current_phase="cua"
+        append_marker "PHASE:cua:START"
+        install_cua
+        append_marker "PHASE:cua:DONE"
+        current_phase="all"
+    else
+        write_cua_wrapper
+        register_cua_mcp
+    fi
+    exit 0
+fi
+
 if provisioning_is_complete; then
     if ! phase_is_done all; then
         append_marker "PHASE:all:DONE"
@@ -1809,6 +1898,7 @@ run_selected_agent_phase codex install_codex
 run_selected_agent_phase grok install_grok
 run_phase workdir create_work_directory
 run_desktop_phase
+run_cua_phase
 run_phase prune prune_boot
 run_custom_phase
 

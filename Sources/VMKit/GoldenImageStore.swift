@@ -73,7 +73,7 @@ public actor GoldenImageStore {
     private static let sharedCacheGate = SharedGoldenCacheGate()
 
     /// Schema version mixed into the cache key and written on every manifest.
-    public static let schemaVersion = 4
+    public static let schemaVersion = 5
 
     /// Errors raised when a golden cannot be staged, captured, or cloned.
     public enum Failure: Error, Sendable, Equatable {
@@ -117,15 +117,20 @@ public actor GoldenImageStore {
         /// Whether the guest provisions the XFCE desktop environment.
         public var desktopEnabled: Bool
 
+        /// Whether the guest provisions the Cua Driver and registers it as an MCP server.
+        public var cuaDriverEnabled: Bool
+
         /// Creates cache-key inputs from the provision-affecting settings.
         public init(
             installAgents: [String],
             customScript: String? = nil,
-            desktopEnabled: Bool = false
+            desktopEnabled: Bool = false,
+            cuaDriverEnabled: Bool = false
         ) {
             self.installAgents = installAgents
             self.customScript = customScript
             self.desktopEnabled = desktopEnabled
+            self.cuaDriverEnabled = cuaDriverEnabled
         }
 
         /// Creates cache-key inputs from persisted VM settings.
@@ -133,7 +138,8 @@ public actor GoldenImageStore {
             self.init(
                 installAgents: settings.installAgents,
                 customScript: settings.customScript,
-                desktopEnabled: settings.desktopEnabled
+                desktopEnabled: settings.desktopEnabled,
+                cuaDriverEnabled: settings.cuaDriverEnabled
             )
         }
     }
@@ -147,6 +153,7 @@ public actor GoldenImageStore {
         public var provisionScriptSHA256: String
         public var customScriptSHA256: String
         public var desktopEnabled: Bool
+        public var cuaDriverEnabled: Bool
         public var donorDiskSizeGB: Int
         public var createdAt: Date
 
@@ -158,6 +165,7 @@ public actor GoldenImageStore {
             provisionScriptSHA256: String,
             customScriptSHA256: String,
             desktopEnabled: Bool = false,
+            cuaDriverEnabled: Bool = false,
             donorDiskSizeGB: Int,
             createdAt: Date
         ) {
@@ -168,6 +176,7 @@ public actor GoldenImageStore {
             self.provisionScriptSHA256 = provisionScriptSHA256
             self.customScriptSHA256 = customScriptSHA256
             self.desktopEnabled = desktopEnabled
+            self.cuaDriverEnabled = cuaDriverEnabled
             self.donorDiskSizeGB = donorDiskSizeGB
             self.createdAt = createdAt
         }
@@ -350,6 +359,7 @@ public actor GoldenImageStore {
             provisionScriptSHA256: provisionScriptSHA256(),
             customScriptSHA256: Self.customScriptSHA256(inputs.customScript),
             desktopEnabled: inputs.desktopEnabled,
+            cuaDriverEnabled: inputs.cuaDriverEnabled,
             donorDiskSizeGB: donorDiskSizeGB,
             createdAt: createdAt
         )
@@ -633,6 +643,7 @@ public actor GoldenImageStore {
             try provisionScriptSHA256(),
             Self.customScriptSHA256(inputs.customScript),
             inputs.desktopEnabled ? "desktop" : "headless",
+            inputs.cuaDriverEnabled ? "cua" : "nocua",
         ]
         return lines.joined(separator: "\n") + "\n"
     }

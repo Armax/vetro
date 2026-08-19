@@ -129,7 +129,8 @@ public struct CloudInitSeed {
         hostname: String = "vetro",
         installAgents: [String] = VMSettings.defaultInstallAgents,
         customScript: String? = nil,
-        desktopEnabled: Bool = false
+        desktopEnabled: Bool = false,
+        cuaEnabled: Bool = false
     ) throws -> RenderedContent {
         try render(
             resources: loadGuestResources(),
@@ -137,7 +138,8 @@ public struct CloudInitSeed {
             hostname: hostname,
             installAgents: installAgents,
             customScript: customScript,
-            desktopEnabled: desktopEnabled
+            desktopEnabled: desktopEnabled,
+            cuaEnabled: cuaEnabled
         )
     }
 
@@ -158,14 +160,16 @@ public struct CloudInitSeed {
         hostname: String = "vetro",
         installAgents: [String] = VMSettings.defaultInstallAgents,
         customScript: String? = nil,
-        desktopEnabled: Bool = false
+        desktopEnabled: Bool = false,
+        cuaEnabled: Bool = false
     ) throws -> URL {
         let rendered = try render(
             publicKey: publicKey,
             hostname: hostname,
             installAgents: installAgents,
             customScript: customScript,
-            desktopEnabled: desktopEnabled
+            desktopEnabled: desktopEnabled,
+            cuaEnabled: cuaEnabled
         )
         let contentHash = Self.contentHash(for: rendered)
 
@@ -287,7 +291,8 @@ public struct CloudInitSeed {
         hostname: String,
         installAgents: [String] = VMSettings.defaultInstallAgents,
         customScript: String? = nil,
-        desktopEnabled: Bool = false
+        desktopEnabled: Bool = false,
+        cuaEnabled: Bool = false
     ) throws -> RenderedContent {
         let normalizedKey = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedKey.isEmpty,
@@ -315,6 +320,7 @@ public struct CloudInitSeed {
             "__VETRO_PROVISION_BASE64__": Data(resources.provisionScript.utf8).base64EncodedString(),
             "__VETRO_AGENTS_CONF__": Self.agentsManifestLine(installAgents),
             "__VETRO_DESKTOP__": desktopEnabled ? "1" : "0",
+            "__VETRO_CUA__": cuaEnabled ? "1" : "0",
             "__VETRO_CUSTOM_SETUP_WRITE_FILE__": Self.customSetupWriteFile(customScript),
         ]
         var userData = resources.userDataTemplate
